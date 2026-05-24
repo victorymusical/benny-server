@@ -3,6 +3,7 @@ import client from "../services/openai.js";
 import fs from "fs";
 import path from "path";
 import { searchShopifyProducts } from "../services/shopify.js";
+import { normalizeCategoryFromMessages } from "../services/category.js";
 
 const router = express.Router();
 
