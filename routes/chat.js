@@ -2,6 +2,7 @@ import express from "express";
 import client from "../services/openai.js";
 import fs from "fs";
 import path from "path";
+import { searchShopifyProducts } from "../services/shopify.js";
 
 const router = express.Router();
 
@@ -24,6 +25,15 @@ router.post("/", async (req, res) => {
     const conversationalRules = loadKnowledgeFile("conversational-rules.md");
     const categoryGovernance = loadKnowledgeFile("category-governance.md");
 
+    const lastUserMessage =
+      messages.filter(m => m.role === "user").slice(-1)[0]?.content || "";
+
+    let products = [];
+
+    if (lastUserMessage) {
+      products = await searchShopifyProducts(lastUserMessage, 5);
+    }
+
     const response = await client.chat.completions.create({
       model: "gpt-4.1-mini",
       messages: [
@@ -43,6 +53,9 @@ ${conversationalRules}
 CATEGORY GOVERNANCE:
 ${categoryGovernance}
 
+REAL SHOPIFY PRODUCTS FOUND:
+${JSON.stringify(products, null, 2)}
+
 Core behavior:
 - Keep responses concise and helpful
 - Avoid filler conversation
@@ -50,6 +63,9 @@ Core behavior:
 - Remember prior customer answers in the conversation
 - Ask only one useful question at a time
 - Never recommend products or brands outside VictoryMusical.com
+- Never invent product names, brands, prices, specifications, or inventory
+- Only recommend products from REAL SHOPIFY PRODUCTS FOUND
+- If no relevant product is found, ask one better qualifying question or say that you need to check availability
 `
         },
         ...messages
@@ -57,7 +73,8 @@ Core behavior:
     });
 
     res.json({
-      reply: response.choices[0].message.content
+      reply: response.choices[0].message.content,
+      products
     });
 
   } catch (error) {
