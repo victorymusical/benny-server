@@ -1,6 +1,16 @@
 const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN;
 const SHOPIFY_STOREFRONT_ACCESS_TOKEN = process.env.SHOPIFY_STOREFRONT_ACCESS_TOKEN;
 
+function formatMoney(money) {
+  if (!money) return null;
+  return `${money.currencyCode} ${money.amount}`;
+}
+
+function toNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 export async function searchShopifyProducts(query, limit = 5) {
   if (!SHOPIFY_STORE_DOMAIN || !SHOPIFY_STOREFRONT_ACCESS_TOKEN) {
     throw new Error("Missing Shopify environment variables.");
@@ -29,14 +39,32 @@ export async function searchShopifyProducts(query, limit = 5) {
                 amount
                 currencyCode
               }
+              maxVariantPrice {
+                amount
+                currencyCode
+              }
             }
-            variants(first: 5) {
+            compareAtPriceRange {
+              minVariantPrice {
+                amount
+                currencyCode
+              }
+              maxVariantPrice {
+                amount
+                currencyCode
+              }
+            }
+            variants(first: 10) {
               edges {
                 node {
                   title
                   availableForSale
                   sku
                   price {
+                    amount
+                    currencyCode
+                  }
+                  compareAtPrice {
                     amount
                     currencyCode
                   }
@@ -74,6 +102,41 @@ export async function searchShopifyProducts(query, limit = 5) {
   return data.data.products.edges.map(edge => {
     const product = edge.node;
 
+    const minPrice = product.priceRange?.minVariantPrice || null;
+    const compareAtMinPrice =
+      product.compareAtPriceRange?.minVariantPrice || null;
+
+    const priceAmount = toNumber(minPrice?.amount);
+    const compareAtPriceAmount = toNumber(compareAtMinPrice?.amount);
+
+    const variants = product.variants.edges.map(v => {
+      const variant = v.node;
+
+      const variantPriceAmount = toNumber(variant.price?.amount);
+      const variantCompareAtAmount = toNumber(variant.compareAtPrice?.amount);
+
+      const variantIsOnSale =
+        variantCompareAtAmount !== null &&
+        variantPriceAmount !== null &&
+        variantCompareAtAmount > variantPriceAmount;
+
+      return {
+        title: variant.title,
+        sku: variant.sku,
+        availableForSale: variant.availableForSale,
+        price: formatMoney(variant.price),
+        priceAmount: variantPriceAmount,
+        compareAtPrice: formatMoney(variant.compareAtPrice),
+        compareAtPriceAmount: variantCompareAtAmount,
+        isOnSale: variantIsOnSale
+      };
+    });
+
+    const isOnSale =
+      compareAtPriceAmount !== null &&
+      priceAmount !== null &&
+      compareAtPriceAmount > priceAmount;
+
     return {
       title: product.title,
       handle: product.handle,
@@ -81,17 +144,18 @@ export async function searchShopifyProducts(query, limit = 5) {
       productType: product.productType,
       description: product.description,
       tags: product.tags,
-      url: product.onlineStoreUrl || `https://${SHOPIFY_STORE_DOMAIN}/products/${product.handle}`,
+      url:
+        product.onlineStoreUrl ||
+        `https://${SHOPIFY_STORE_DOMAIN}/products/${product.handle}`,
       image: product.featuredImage?.url || null,
-      price: product.priceRange?.minVariantPrice
-        ? `${product.priceRange.minVariantPrice.currencyCode} ${product.priceRange.minVariantPrice.amount}`
-        : null,
-      variants: product.variants.edges.map(v => ({
-        title: v.node.title,
-        sku: v.node.sku,
-        availableForSale: v.node.availableForSale,
-        price: `${v.node.price.currencyCode} ${v.node.price.amount}`
-      }))
+
+      price: formatMoney(minPrice),
+      priceAmount,
+      compareAtPrice: formatMoney(compareAtMinPrice),
+      compareAtPriceAmount,
+      isOnSale,
+
+      variants
     };
   });
 }
