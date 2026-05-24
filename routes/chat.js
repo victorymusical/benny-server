@@ -54,6 +54,7 @@ router.post("/", async (req, res) => {
     const conversationalRules = loadKnowledgeFile("conversational-rules.md");
     const categoryGovernance = loadKnowledgeFile("category-governance.md");
     const greetingRules = loadKnowledgeFile("greeting-rules.md");
+    const financingRules = loadKnowledgeFile("financing-rules.md");
 
     const intentData = classifyIntent(messages);
     const normalizedCategory =
@@ -125,6 +126,9 @@ ${JSON.stringify(products, null, 2)}
 
 SALE PRODUCTS FOUND:
 ${JSON.stringify(saleProducts, null, 2)}
+
+FINANCING AND PAYMENT RULES:
+${financingRules}
 
 Core behavior:
 - Keep responses concise and helpful
