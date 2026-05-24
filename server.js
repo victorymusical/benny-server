@@ -3,6 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import chatRoutes from "./routes/chat.js";
 import path from "path";
+import debugRoutes from "./routes/debug.js";
 
 dotenv.config();
 
@@ -12,6 +13,7 @@ app.use(cors());
 app.use(express.json());
 app.use("/api/chat", chatRoutes);
 app.use(express.static("public"));
+app.use("/api/debug", debugRoutes);
 
 app.get("/", (req, res) => {
   res.json({
