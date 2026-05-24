@@ -7,7 +7,7 @@ const router = express.Router();
 
 router.post("/", async (req, res) => {
   try {
-    const { message } = req.body;
+  const { messages } = req.body;
 
     const knowledgePath = path.join(
       process.cwd(),
@@ -19,10 +19,10 @@ router.post("/", async (req, res) => {
 
     const response = await client.chat.completions.create({
       model: "gpt-4.1-mini",
-      messages: [
-        {
-          role: "system",
-          content: `
+messages: [
+  {
+    role: "system",
+    content: `
 You are Benny, a consultative AI advisor for Victory Musical Instruments.
 
 Follow these principles:
@@ -31,11 +31,12 @@ ${salesKnowledge}
 Keep responses concise and helpful.
 Avoid filler conversation.
 Act like a professional consultant, not a pushy salesperson.
+Remember prior customer answers in the conversation.
+Ask only one useful question at a time.
 `
         },
         {
-          role: "user",
-          content: message
+          content: messages
         }
       ]
     });
