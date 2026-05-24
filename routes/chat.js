@@ -6,6 +6,7 @@ import { searchShopifyProducts } from "../services/shopify.js";
 import { normalizeCategoryFromMessages } from "../services/category.js";
 
 const router = express.Router();
+const greetingRules = loadKnowledgeFile("greeting-rules.md");
 
 function loadKnowledgeFile(filename) {
   const filePath = path.join(process.cwd(), "knowledge", filename);
@@ -93,6 +94,9 @@ ${salesKnowledge}
 
 CONVERSATIONAL RULES:
 ${conversationalRules}
+
+GREETING RULES:
+${greetingRules}
 
 CATEGORY GOVERNANCE:
 ${categoryGovernance}
