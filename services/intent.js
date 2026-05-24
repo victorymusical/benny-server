@@ -202,38 +202,107 @@ function detectCategory(text) {
   return null;
 }
 
-function detectSpecificProduct(text) {
+function detectProduct(text) {
   const normalized = normalizeText(text);
 
-  const productPatterns = [
-    "apollo x4",
-    "apollo twin",
-    "apollo solo",
-    "apollo x6",
-    "apollo x8",
-    "apollo x16",
-    "volt 1",
-    "volt 2",
-    "volt 176",
-    "volt 276",
-    "volt 476",
-    "volt 876",
-    "sp33cm",
-    "sp32cm",
-    "sp31dm",
-    "hc40",
-    "hc50",
-    "hm90",
-    "bricasti m7",
-    "bricasti m10",
-    "bock 251",
-    "sm58",
-    "pg58"
+  const productRules = [
+    {
+      product: "Bricasti M7",
+      terms: ["bricasti m7", "m7"]
+    },
+    {
+      product: "Bricasti M10",
+      terms: ["bricasti m10", "m10"]
+    },
+    {
+      product: "Apollo x4",
+      terms: ["apollo x4", "x4"]
+    },
+    {
+      product: "Apollo Twin",
+      terms: ["apollo twin", "twin x", "apollo twin x"]
+    },
+    {
+      product: "Apollo Solo",
+      terms: ["apollo solo", "solo"]
+    },
+    {
+      product: "Apollo x6",
+      terms: ["apollo x6", "x6"]
+    },
+    {
+      product: "Apollo x8",
+      terms: ["apollo x8", "x8"]
+    },
+    {
+      product: "Apollo x16",
+      terms: ["apollo x16", "x16"]
+    },
+    {
+      product: "Volt 1",
+      terms: ["volt 1"]
+    },
+    {
+      product: "Volt 2",
+      terms: ["volt 2"]
+    },
+    {
+      product: "Volt 176",
+      terms: ["volt 176"]
+    },
+    {
+      product: "Volt 276",
+      terms: ["volt 276"]
+    },
+    {
+      product: "Volt 476",
+      terms: ["volt 476"]
+    },
+    {
+      product: "Volt 876",
+      terms: ["volt 876"]
+    },
+    {
+      product: "StreamPath SP33CM",
+      terms: ["sp33cm", "streamPath sp33cm", "streampath sp33cm"]
+    },
+    {
+      product: "StreamPath SP32CM",
+      terms: ["sp32cm", "streamPath sp32cm", "streampath sp32cm"]
+    },
+    {
+      product: "StreamPath SP31DM",
+      terms: ["sp31dm", "streamPath sp31dm", "streampath sp31dm"]
+    },
+    {
+      product: "StreamPath HC40",
+      terms: ["hc40", "streamPath hc40", "streampath hc40"]
+    },
+    {
+      product: "StreamPath HC50",
+      terms: ["hc50", "streamPath hc50", "streampath hc50"]
+    },
+    {
+      product: "StreamPath HM90",
+      terms: ["hm90", "streamPath hm90", "streampath hm90"]
+    },
+    {
+      product: "UA Bock 251",
+      terms: ["bock 251", "ua bock 251"]
+    },
+    {
+      product: "Shure SM58",
+      terms: ["sm58", "shure sm58"]
+    },
+    {
+      product: "Shure PG58",
+      terms: ["pg58", "shure pg58"]
+    }
   ];
 
-  for (const product of productPatterns) {
-    if (normalized.includes(product)) {
-      return product;
+  for (const rule of productRules) {
+    if (rule.terms.some(term => normalized.includes(term.toLowerCase()))) {
+      return rule.product;
     }
   }
 
@@ -259,8 +328,10 @@ function detectIntent(text) {
     normalized.includes("cost") ||
     normalized.includes("discount") ||
     normalized.includes("promotion") ||
+    normalized.includes("promotions") ||
     normalized.includes("promo") ||
-    normalized.includes("sale")
+    normalized.includes("sale") ||
+    normalized.includes("offer")
   ) {
     return "pricing_question";
   }
@@ -268,7 +339,9 @@ function detectIntent(text) {
   if (
     normalized.includes("link") ||
     normalized.includes("url") ||
-    normalized.includes("page")
+    normalized.includes("page") ||
+    normalized.includes("where can i see") ||
+    normalized.includes("send me")
   ) {
     return "link_request";
   }
@@ -320,34 +393,54 @@ export function classifyIntent(messages = []) {
 
   const fullConversationText = messages
     .filter(m => m.role === "user")
-    .map(m => m.content)
+    .map(m => String(m.content || ""))
     .join(" ");
 
+  const normalizedLastMessage = normalizeText(lastUserMessage);
+  const normalizedFullText = normalizeText(fullConversationText);
+
   const intent = detectIntent(lastUserMessage);
+
   const brandMentioned =
     detectBrand(lastUserMessage) || detectBrand(fullConversationText);
 
   const categoryMentioned =
     detectCategory(lastUserMessage) || detectCategory(fullConversationText);
 
-  const specificProductMentioned =
-    detectSpecificProduct(lastUserMessage) || detectSpecificProduct(fullConversationText);
+  let productMentioned =
+    detectProduct(lastUserMessage) || detectProduct(fullConversationText);
+
+  if (
+    normalizedFullText.includes("bricasti") &&
+    normalizedLastMessage.includes("m7")
+  ) {
+    productMentioned = "Bricasti M7";
+  }
+
+  if (
+    normalizedFullText.includes("bricasti") &&
+    normalizedLastMessage.includes("m10")
+  ) {
+    productMentioned = "Bricasti M10";
+  }
+
+  if (
+    normalizedFullText.includes("apollo") &&
+    normalizedLastMessage.includes("x4")
+  ) {
+    productMentioned = "Apollo x4";
+  }
 
   return {
     intent,
     lastUserMessage,
     brandMentioned,
     categoryMentioned,
-    specificProductMentioned,
-    needsPrice:
-      intent === "pricing_question",
-    needsLink:
-      intent === "link_request",
-    needsQuote:
-      intent === "quote_request",
-    needsBrandList:
-      intent === "brand_lookup",
-    needsCompatibility:
-      intent === "compatibility_question"
+    specificProductMentioned: productMentioned,
+    needsPrice: intent === "pricing_question",
+    needsLink: intent === "link_request",
+    needsQuote: intent === "quote_request",
+    needsBrandList: intent === "brand_lookup",
+    needsCompatibility: intent === "compatibility_question"
   };
 }
