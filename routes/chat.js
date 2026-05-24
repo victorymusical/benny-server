@@ -4,9 +4,9 @@ import fs from "fs";
 import path from "path";
 import { searchShopifyProducts } from "../services/shopify.js";
 import { normalizeCategoryFromMessages } from "../services/category.js";
+import { getVendorsForCategory } from "../services/vendors.js";
 
 const router = express.Router();
-const greetingRules = loadKnowledgeFile("greeting-rules.md");
 
 function loadKnowledgeFile(filename) {
   const filePath = path.join(process.cwd(), "knowledge", filename);
@@ -19,13 +19,29 @@ function loadKnowledgeFile(filename) {
   }
 }
 
-function detectSearchQuery(messages) {
+function getLastUserMessage(messages) {
+  return messages.filter(m => m.role === "user").slice(-1)[0]?.content || "";
+}
+
+function detectSearchQuery(messages, normalizedCategory) {
+  const lastUserMessage = getLastUserMessage(messages).toLowerCase();
+
+  if (lastUserMessage.includes("apollo")) return "Apollo audio interface";
+  if (lastUserMessage.includes("universal audio")) return "Universal Audio audio interface";
+  if (lastUserMessage.includes("ik multimedia")) return "IK Multimedia audio interface";
+  if (lastUserMessage.includes("esi")) return "ESI audio interface";
+
+  if (normalizedCategory) return normalizedCategory;
+
   const userText = messages
     .filter(m => m.role === "user")
     .map(m => String(m.content || "").toLowerCase())
     .join(" ");
 
   if (userText.includes("audio interface")) return "audio interface";
+  if (userText.includes("sound card")) return "audio interface";
+  if (userText.includes("recording interface")) return "audio interface";
+  if (userText.includes("usb interface")) return "audio interface";
   if (userText.includes("microphone")) return "microphone";
   if (userText.includes("headphone")) return "headphones";
   if (userText.includes("saxophone") || userText.includes("sax")) return "saxophone";
@@ -34,21 +50,19 @@ function detectSearchQuery(messages) {
   if (userText.includes("clarinet")) return "clarinet";
   if (userText.includes("flute")) return "flute";
 
-  const lastUserMessage =
-    messages.filter(m => m.role === "user").slice(-1)[0]?.content || "";
-
-  return lastUserMessage;
+  return getLastUserMessage(messages);
 }
 
 function detectBrandQuestion(messages) {
-  const lastUserMessage =
-    messages.filter(m => m.role === "user").slice(-1)[0]?.content?.toLowerCase() || "";
+  const lastUserMessage = getLastUserMessage(messages).toLowerCase();
 
   return (
     lastUserMessage.includes("what brands") ||
     lastUserMessage.includes("which brands") ||
+    lastUserMessage.includes("how many brands") ||
     lastUserMessage.includes("brands do you carry") ||
-    lastUserMessage.includes("brands do you sell")
+    lastUserMessage.includes("brands do you sell") ||
+    lastUserMessage.includes("brands do you offer")
   );
 }
 
@@ -59,25 +73,31 @@ router.post("/", async (req, res) => {
     const salesKnowledge = loadKnowledgeFile("sales-methodology.md");
     const conversationalRules = loadKnowledgeFile("conversational-rules.md");
     const categoryGovernance = loadKnowledgeFile("category-governance.md");
+    const greetingRules = loadKnowledgeFile("greeting-rules.md");
 
     const normalizedCategory = normalizeCategoryFromMessages(messages);
-    const fallbackSearchQuery = detectSearchQuery(messages);
-    const searchQuery = normalizedCategory || fallbackSearchQuery;
     const isBrandQuestion = detectBrandQuestion(messages);
+    const searchQuery = detectSearchQuery(messages, normalizedCategory);
 
     let products = [];
+    let categoryVendors = [];
 
     if (searchQuery) {
-      products = await searchShopifyProducts(searchQuery, 10);
+      products = await searchShopifyProducts(searchQuery, 20);
     }
 
-    const brands = [
+    if (normalizedCategory) {
+      categoryVendors = await getVendorsForCategory(normalizedCategory);
+    }
+
+    const productSearchVendors = [
       ...new Set(
         products
           .map(p => p.vendor)
           .filter(Boolean)
+          .map(v => v.trim())
       )
-    ];
+    ].sort();
 
     const response = await client.chat.completions.create({
       model: "gpt-4.1-mini",
@@ -95,11 +115,11 @@ ${salesKnowledge}
 CONVERSATIONAL RULES:
 ${conversationalRules}
 
-GREETING RULES:
-${greetingRules}
-
 CATEGORY GOVERNANCE:
 ${categoryGovernance}
+
+GREETING RULES:
+${greetingRules}
 
 NORMALIZED CATEGORY:
 ${normalizedCategory || "None"}
@@ -107,14 +127,17 @@ ${normalizedCategory || "None"}
 SEARCH QUERY USED:
 ${searchQuery}
 
-REAL SHOPIFY PRODUCTS FOUND:
-${JSON.stringify(products, null, 2)}
-
-BRANDS FOUND FROM SHOPIFY PRODUCTS:
-${JSON.stringify(brands, null, 2)}
-
 CUSTOMER IS ASKING ABOUT BRANDS:
 ${isBrandQuestion ? "YES" : "NO"}
+
+CATEGORY VENDORS VERIFIED FROM FILTERED PRODUCT CATEGORY:
+${JSON.stringify(categoryVendors, null, 2)}
+
+PRODUCT SEARCH VENDORS:
+${JSON.stringify(productSearchVendors, null, 2)}
+
+REAL SHOPIFY PRODUCTS FOUND:
+${JSON.stringify(products, null, 2)}
 
 Core behavior:
 - Keep responses concise and helpful
@@ -124,9 +147,11 @@ Core behavior:
 - Ask only one useful question at a time
 - Never recommend products or brands outside VictoryMusical.com
 - Never invent product names, brands, prices, specifications, or inventory
-- Only recommend products from REAL SHOPIFY PRODUCTS FOUND
-- If the customer asks what brands we carry, answer directly using BRANDS FOUND FROM SHOPIFY PRODUCTS
-- If no relevant brands or products are found, do not make absolute inventory claims. Ask one better qualifying question or say that you need to check availability.
+- If the customer asks what brands we carry, answer from CATEGORY VENDORS VERIFIED FROM FILTERED PRODUCT CATEGORY, not from generic product search
+- Do not mention StreamPath as an audio interface brand unless it appears in CATEGORY VENDORS VERIFIED FROM FILTERED PRODUCT CATEGORY
+- Do not say we do not carry a specific brand unless the product search specifically searched that brand and returned no relevant products
+- If the customer asks for Apollo, treat Apollo as Universal Audio and search for Apollo audio interfaces
+- If no relevant products or vendors are found, say you need to check availability instead of making absolute inventory claims
 `
         },
         ...messages
@@ -137,7 +162,9 @@ Core behavior:
       reply: response.choices[0].message.content,
       normalizedCategory,
       searchQuery,
-      brands,
+      isBrandQuestion,
+      categoryVendors,
+      productSearchVendors,
       products
     });
 
