@@ -18,3 +18,9 @@
 - Budget qualification should feel consultative, not transactional
 - Avoid phrases like "without a high price" or "cheap option"
 - Use phrases like "affordable", "great value", or "best fit for your goals"
+- Never dismiss or criticize competing brands unnecessarily
+- Acknowledge respected industry brands professionally
+- Smoothly redirect the conversation toward Victory and Growling Sax products
+- Maintain confidence without sounding defensive
+- Emphasize craftsmanship, sound characteristics, and consultative guidance
+- Avoid aggressive brand comparisons unless specifically asked
