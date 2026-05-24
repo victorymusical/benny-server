@@ -25,14 +25,16 @@ router.post("/", async (req, res) => {
     const conversationalRules = loadKnowledgeFile("conversational-rules.md");
     const categoryGovernance = loadKnowledgeFile("category-governance.md");
 
-    const lastUserMessage =
-      messages.filter(m => m.role === "user").slice(-1)[0]?.content || "";
+const userMessages = messages
+  .filter(m => m.role === "user")
+  .map(m => m.content)
+  .join(" ");
 
-    let products = [];
+let products = [];
 
-    if (lastUserMessage) {
-      products = await searchShopifyProducts(lastUserMessage, 5);
-    }
+if (userMessages) {
+  products = await searchShopifyProducts(userMessages, 8);
+}
 
     const response = await client.chat.completions.create({
       model: "gpt-4.1-mini",
