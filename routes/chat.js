@@ -19,6 +19,52 @@ function loadKnowledgeFile(filename) {
   }
 }
 
+function loadKnowledgeBase() {
+  const knowledgeFiles = [
+    "sales-methodology.md",
+    "conversational-rules.md",
+    "category-governance.md",
+    "greeting-rules.md",
+    "financing-rules.md",
+    "financing-and-sales.md",
+
+    "saxophones.md",
+    "reed-instruments.md",
+    "flutes-piccolos.md",
+    "high-brass.md",
+    "low-brass.md",
+    "trombones.md",
+
+    "guitars.md",
+    "bass-guitars.md",
+    "keys-and-synths.md",
+
+    "drums.md",
+    "percussion.md",
+    "orchestral-strings.md",
+
+    "audio-interfaces.md",
+    "microphones.md",
+    "headphones-and-monitoring.md",
+    "studio-workflows.md",
+    "video-production.md",
+    "live-sound.md",
+    "network-solutions.md",
+    "house-of-worship.md",
+    "cables.md"
+  ];
+
+  return knowledgeFiles
+    .map(file => {
+      const content = loadKnowledgeFile(file);
+
+      return content
+        ? `\n\n===== ${file} =====\n\n${content}`
+        : "";
+    })
+    .join("\n");
+}
+
 async function getProductsForIntent(intentData) {
   const allProducts = [];
 
@@ -53,11 +99,7 @@ router.post("/", async (req, res) => {
   try {
     const { messages = [] } = req.body;
 
-    const salesKnowledge = loadKnowledgeFile("sales-methodology.md");
-    const conversationalRules = loadKnowledgeFile("conversational-rules.md");
-    const categoryGovernance = loadKnowledgeFile("category-governance.md");
-    const greetingRules = loadKnowledgeFile("greeting-rules.md");
-    const financingRules = loadKnowledgeFile("financing-rules.md");
+    const knowledgeBase = loadKnowledgeBase();
 
     const intentData = await classifyIntentWithAI(messages);
 
@@ -103,22 +145,9 @@ router.post("/", async (req, res) => {
           content: `
 You are Benny, a consultative AI sales advisor for Victory Musical Instruments.
 
-Follow this internal knowledge carefully.
+Use the following internal knowledge carefully:
 
-SALES METHODOLOGY:
-${salesKnowledge}
-
-CONVERSATIONAL RULES:
-${conversationalRules}
-
-CATEGORY GOVERNANCE:
-${categoryGovernance}
-
-GREETING RULES:
-${greetingRules}
-
-FINANCING AND PAYMENT RULES:
-${financingRules}
+${knowledgeBase}
 
 INTENT DATA:
 ${JSON.stringify(intentData, null, 2)}
@@ -143,11 +172,12 @@ Core behavior:
 - Act like a professional consultant, not a pushy salesperson.
 - Remember prior customer answers in the conversation.
 - Ask only one useful question at a time.
-- Never recommend products or brands outside VictoryMusical.com.
+- Never recommend products or brands outside VictoryMusical.com unless discussing special-order or quote-based consultation.
 - Never invent product names, brands, prices, specifications, discounts, or inventory.
 - If product data is available, answer directly from ALL REAL SHOPIFY PRODUCTS FOUND.
 - If the customer asks for price, discount, sale, availability, or link, answer directly from product data.
 - You are allowed to provide product URLs from Shopify product data.
+- When an addToCartUrl is available, include it as an Add to Cart link.
 - Never say you cannot provide links if a product URL is available.
 - Never tell the customer to wait while you check.
 - If a product has isOnSale=true, explain that it is currently showing sale pricing.
@@ -158,11 +188,6 @@ Core behavior:
 - If no relevant products or vendors are found, say you need to confirm availability instead of making absolute claims.
 - If the customer is building a quote, summarize the requested items clearly but do not claim that a real cart or order has been created yet.
 - When the customer gives multiple products, treat it as a multi-item quote or cart-building request.
-- When the customer asks about cables, cable lengths, connectors, or accessories, retrieve and recommend real accessory products from Shopify.
-- Do not claim cable brands, lengths, or availability unless they appear in REAL SHOPIFY PRODUCTS FOUND.
-- If the customer asks what cable sizes are available, answer from product data only.
-- If no exact length is found, say what you are seeing and suggest the closest available option.
-- Accessory completion is part of closing the sale. Do not keep asking broad questions once the customer has already described the setup.
 `
         },
         ...messages
