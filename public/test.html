@@ -14,7 +14,7 @@
       font-family: Arial, sans-serif;
       background: #f4f5f7;
       color: #111827;
-      padding: 16px;
+      padding: 12px;
     }
 
     .benny-widget {
@@ -28,22 +28,22 @@
       overflow: hidden;
       display: flex;
       flex-direction: column;
-      height: 640px;
+      height: 620px;
     }
 
     .benny-header {
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 12px 14px;
+      padding: 10px 12px;
       border-bottom: 1px solid #e5e7eb;
       background: #ffffff;
       flex-shrink: 0;
     }
 
     .avatar {
-      width: 34px;
-      height: 34px;
+      width: 32px;
+      height: 32px;
       border-radius: 50%;
       background: #7a2f1d;
       color: #ffffff;
@@ -51,7 +51,7 @@
       align-items: center;
       justify-content: center;
       font-weight: 700;
-      font-size: 16px;
+      font-size: 15px;
       flex-shrink: 0;
     }
 
@@ -63,14 +63,14 @@
     .agent-info strong {
       display: block;
       font-size: 15px;
-      line-height: 1.2;
+      line-height: 1.1;
       color: #111827;
     }
 
     .agent-info span {
       display: block;
       color: #6b7280;
-      font-size: 12.5px;
+      font-size: 12px;
       margin-top: 2px;
       white-space: nowrap;
       overflow: hidden;
@@ -88,14 +88,14 @@
 
     #chat {
       flex: 1;
-      padding: 14px;
+      padding: 12px;
       overflow-y: auto;
       background: #fafafa;
     }
 
     .message-row {
       display: flex;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
     }
 
     .message-row.user-row {
@@ -108,11 +108,10 @@
 
     .bubble {
       max-width: 82%;
-      padding: 11px 13px;
-      border-radius: 13px;
+      padding: 9px 11px;
+      border-radius: 12px;
       font-size: 14.5px;
-      line-height: 1.42;
-      white-space: pre-wrap;
+      line-height: 1.35;
       word-wrap: break-word;
     }
 
@@ -132,8 +131,8 @@
     .speaker {
       display: block;
       font-weight: 700;
-      margin-bottom: 4px;
-      font-size: 12.5px;
+      margin-bottom: 3px;
+      font-size: 12px;
     }
 
     .assistant-name {
@@ -142,6 +141,10 @@
 
     .user-name {
       color: #ffffff;
+    }
+
+    .message-text {
+      white-space: pre-wrap;
     }
 
     a {
@@ -157,7 +160,7 @@
     .composer {
       display: flex;
       gap: 8px;
-      padding: 10px;
+      padding: 9px;
       border-top: 1px solid #e5e7eb;
       background: #ffffff;
       flex-shrink: 0;
@@ -165,12 +168,12 @@
 
     textarea {
       flex: 1;
-      min-height: 42px;
-      max-height: 110px;
-      padding: 10px 12px;
+      min-height: 40px;
+      max-height: 100px;
+      padding: 9px 11px;
       font-family: Arial, sans-serif;
       font-size: 14.5px;
-      line-height: 1.35;
+      line-height: 1.3;
       resize: none;
       border: 1px solid #cbd5e1;
       border-radius: 9px;
@@ -179,11 +182,11 @@
 
     textarea:focus {
       border-color: #7a2f1d;
-      box-shadow: 0 0 0 3px rgba(122, 47, 29, 0.12);
+      box-shadow: 0 0 0 2px rgba(122, 47, 29, 0.14);
     }
 
     button {
-      width: 72px;
+      width: 70px;
       border: none;
       border-radius: 9px;
       background: #7a2f1d;
@@ -217,22 +220,13 @@
         box-shadow: none;
       }
 
-      .benny-header {
-        padding: 10px 12px;
-      }
-
-      #chat {
-        padding: 12px;
-      }
-
       .bubble {
         max-width: 92%;
         font-size: 14px;
-        padding: 10px 11px;
       }
 
       .composer {
-        padding: 9px;
+        padding: 8px;
       }
 
       textarea {
@@ -241,7 +235,7 @@
       }
 
       button {
-        width: 66px;
+        width: 64px;
         font-size: 14px;
       }
     }
@@ -307,12 +301,16 @@
       const bubble = document.createElement("div");
       bubble.className = `bubble ${role === "user" ? "user-bubble" : "assistant-bubble"}`;
 
-      bubble.innerHTML = `
-        <span class="speaker ${role === "user" ? "user-name" : "assistant-name"}">
-          ${role === "user" ? "You" : "Benny"}
-        </span>
-        ${linkify(text)}
-      `;
+      const speaker = document.createElement("span");
+      speaker.className = `speaker ${role === "user" ? "user-name" : "assistant-name"}`;
+      speaker.textContent = role === "user" ? "You" : "Benny";
+
+      const messageText = document.createElement("div");
+      messageText.className = "message-text";
+      messageText.innerHTML = linkify(text);
+
+      bubble.appendChild(speaker);
+      bubble.appendChild(messageText);
 
       row.appendChild(bubble);
       chat.appendChild(row);
