@@ -17,6 +17,39 @@ function loadKnowledgeFile(filename) {
   }
 }
 
+function detectSearchQuery(messages) {
+  const userText = messages
+    .filter(m => m.role === "user")
+    .map(m => m.content.toLowerCase())
+    .join(" ");
+
+  if (userText.includes("audio interface")) return "audio interface";
+  if (userText.includes("microphone")) return "microphone";
+  if (userText.includes("headphone")) return "headphones";
+  if (userText.includes("saxophone") || userText.includes("sax")) return "saxophone";
+  if (userText.includes("trumpet")) return "trumpet";
+  if (userText.includes("trombone")) return "trombone";
+  if (userText.includes("clarinet")) return "clarinet";
+  if (userText.includes("flute")) return "flute";
+
+  const lastUserMessage =
+    messages.filter(m => m.role === "user").slice(-1)[0]?.content || "";
+
+  return lastUserMessage;
+}
+
+function detectBrandQuestion(messages) {
+  const lastUserMessage =
+    messages.filter(m => m.role === "user").slice(-1)[0]?.content.toLowerCase() || "";
+
+  return (
+    lastUserMessage.includes("what brands") ||
+    lastUserMessage.includes("which brands") ||
+    lastUserMessage.includes("brands do you carry") ||
+    lastUserMessage.includes("brands do you sell")
+  );
+}
+
 router.post("/", async (req, res) => {
   try {
     const { messages } = req.body;
@@ -25,16 +58,22 @@ router.post("/", async (req, res) => {
     const conversationalRules = loadKnowledgeFile("conversational-rules.md");
     const categoryGovernance = loadKnowledgeFile("category-governance.md");
 
-const userMessages = messages
-  .filter(m => m.role === "user")
-  .map(m => m.content)
-  .join(" ");
+    const searchQuery = detectSearchQuery(messages);
+    const isBrandQuestion = detectBrandQuestion(messages);
 
-let products = [];
+    let products = [];
 
-if (userMessages) {
-  products = await searchShopifyProducts(userMessages, 8);
-}
+    if (searchQuery) {
+      products = await searchShopifyProducts(searchQuery, 10);
+    }
+
+    const brands = [
+      ...new Set(
+        products
+          .map(p => p.vendor)
+          .filter(Boolean)
+      )
+    ];
 
     const response = await client.chat.completions.create({
       model: "gpt-4.1-mini",
@@ -55,8 +94,17 @@ ${conversationalRules}
 CATEGORY GOVERNANCE:
 ${categoryGovernance}
 
+SEARCH QUERY USED:
+${searchQuery}
+
 REAL SHOPIFY PRODUCTS FOUND:
 ${JSON.stringify(products, null, 2)}
+
+BRANDS FOUND FROM SHOPIFY PRODUCTS:
+${JSON.stringify(brands, null, 2)}
+
+CUSTOMER IS ASKING ABOUT BRANDS:
+${isBrandQuestion ? "YES" : "NO"}
 
 Core behavior:
 - Keep responses concise and helpful
@@ -67,7 +115,8 @@ Core behavior:
 - Never recommend products or brands outside VictoryMusical.com
 - Never invent product names, brands, prices, specifications, or inventory
 - Only recommend products from REAL SHOPIFY PRODUCTS FOUND
-- If no relevant product is found, ask one better qualifying question or say that you need to check availability
+- If the customer asks what brands we carry, answer directly using BRANDS FOUND FROM SHOPIFY PRODUCTS
+- If no relevant brands or products are found, say you do not see a matching product in the current catalog and ask one better qualifying question
 `
         },
         ...messages
@@ -76,6 +125,8 @@ Core behavior:
 
     res.json({
       reply: response.choices[0].message.content,
+      searchQuery,
+      brands,
       products
     });
 
