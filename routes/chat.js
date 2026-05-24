@@ -5,17 +5,24 @@ import path from "path";
 
 const router = express.Router();
 
+function loadKnowledgeFile(filename) {
+  const filePath = path.join(process.cwd(), "knowledge", filename);
+
+  try {
+    return fs.readFileSync(filePath, "utf8");
+  } catch (error) {
+    console.warn(`Knowledge file missing: ${filename}`);
+    return "";
+  }
+}
+
 router.post("/", async (req, res) => {
   try {
     const { messages } = req.body;
 
-    const knowledgePath = path.join(
-      process.cwd(),
-      "knowledge",
-      "sales-methodology.md"
-    );
-
-    const salesKnowledge = fs.readFileSync(knowledgePath, "utf8");
+    const salesKnowledge = loadKnowledgeFile("sales-methodology.md");
+    const conversationalRules = loadKnowledgeFile("conversational-rules.md");
+    const categoryGovernance = loadKnowledgeFile("category-governance.md");
 
     const response = await client.chat.completions.create({
       model: "gpt-4.1-mini",
@@ -25,14 +32,24 @@ router.post("/", async (req, res) => {
           content: `
 You are Benny, a consultative AI advisor for Victory Musical Instruments.
 
-Follow these principles:
+Follow this internal knowledge carefully.
+
+SALES METHODOLOGY:
 ${salesKnowledge}
 
-Keep responses concise and helpful.
-Avoid filler conversation.
-Act like a professional consultant, not a pushy salesperson.
-Remember prior customer answers in the conversation.
-Ask only one useful question at a time.
+CONVERSATIONAL RULES:
+${conversationalRules}
+
+CATEGORY GOVERNANCE:
+${categoryGovernance}
+
+Core behavior:
+- Keep responses concise and helpful
+- Avoid filler conversation
+- Act like a professional consultant, not a pushy salesperson
+- Remember prior customer answers in the conversation
+- Ask only one useful question at a time
+- Never recommend products or brands outside VictoryMusical.com
 `
         },
         ...messages
