@@ -158,6 +158,11 @@ Core behavior:
 - If no relevant products or vendors are found, say you need to confirm availability instead of making absolute claims.
 - If the customer is building a quote, summarize the requested items clearly but do not claim that a real cart or order has been created yet.
 - When the customer gives multiple products, treat it as a multi-item quote or cart-building request.
+- When the customer asks about cables, cable lengths, connectors, or accessories, retrieve and recommend real accessory products from Shopify.
+- Do not claim cable brands, lengths, or availability unless they appear in REAL SHOPIFY PRODUCTS FOUND.
+- If the customer asks what cable sizes are available, answer from product data only.
+- If no exact length is found, say what you are seeing and suggest the closest available option.
+- Accessory completion is part of closing the sale. Do not keep asking broad questions once the customer has already described the setup.
 `
         },
         ...messages
