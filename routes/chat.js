@@ -81,7 +81,8 @@ Core behavior:
     console.error(error);
 
     res.status(500).json({
-      error: "Benny encountered an error."
+      error: "Benny encountered an error.",
+      details: error.message
     });
   }
 });
