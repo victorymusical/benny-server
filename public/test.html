@@ -2,145 +2,164 @@
 <html>
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Benny Test</title>
+  <title>Benny AI</title>
 
   <style>
     * {
       box-sizing: border-box;
     }
 
+    :root {
+      --bg: #f5f6f8;
+      --panel: #ffffff;
+      --text: #111827;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --brand: #7a2f1d;
+      --brand-dark: #5f2315;
+      --blue: #2563eb;
+      --shadow: 0 18px 50px rgba(15, 23, 42, 0.12);
+    }
+
     body {
       margin: 0;
-      font-family: Arial, sans-serif;
-      background: #f4f5f7;
-      color: #111827;
-      padding: 12px;
+      min-height: 100vh;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(122, 47, 29, 0.12), transparent 32%),
+        radial-gradient(circle at bottom right, rgba(37, 99, 235, 0.10), transparent 30%),
+        var(--bg);
+      color: var(--text);
+      padding: 18px;
     }
 
-    .benny-widget {
+    .app {
       width: 100%;
-      max-width: 760px;
+      max-width: 880px;
+      height: calc(100vh - 36px);
       margin: 0 auto;
-      background: #ffffff;
-      border: 1px solid #d7dce2;
-      border-radius: 14px;
-      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.08);
-      overflow: hidden;
       display: flex;
       flex-direction: column;
-      height: 620px;
+      background: rgba(255, 255, 255, 0.88);
+      backdrop-filter: blur(18px);
+      border: 1px solid rgba(229, 231, 235, 0.9);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
     }
 
-    .benny-header {
+    .topbar {
       display: flex;
       align-items: center;
-      gap: 10px;
-      padding: 10px 12px;
-      border-bottom: 1px solid #e5e7eb;
-      background: #ffffff;
-      flex-shrink: 0;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.92);
     }
 
-    .avatar {
-      width: 32px;
-      height: 32px;
-      border-radius: 50%;
-      background: #7a2f1d;
-      color: #ffffff;
+    .identity {
       display: flex;
       align-items: center;
-      justify-content: center;
-      font-weight: 700;
-      font-size: 15px;
-      flex-shrink: 0;
-    }
-
-    .agent-info {
-      flex: 1;
+      gap: 12px;
       min-width: 0;
     }
 
-    .agent-info strong {
-      display: block;
-      font-size: 15px;
-      line-height: 1.1;
-      color: #111827;
+    .avatar {
+      width: 42px;
+      height: 42px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--brand), #b45332);
+      color: white;
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+      font-size: 18px;
+      flex-shrink: 0;
     }
 
-    .agent-info span {
+    .title strong {
       display: block;
-      color: #6b7280;
-      font-size: 12px;
-      margin-top: 2px;
+      font-size: 17px;
+      line-height: 1.1;
+    }
+
+    .title span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
 
-    .status-dot {
-      width: 7px;
-      height: 7px;
-      background: #16a34a;
-      border-radius: 50%;
-      display: inline-block;
-      margin-right: 5px;
+    .pill {
+      color: #166534;
+      background: #dcfce7;
+      border: 1px solid #bbf7d0;
+      font-size: 12px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      white-space: nowrap;
     }
 
     #chat {
       flex: 1;
-      padding: 12px;
       overflow-y: auto;
-      background: #fafafa;
+      padding: 22px;
+      scroll-behavior: smooth;
     }
 
     .message-row {
       display: flex;
-      margin-bottom: 10px;
+      margin-bottom: 14px;
     }
 
-    .message-row.user-row {
-      justify-content: flex-end;
-    }
-
-    .message-row.assistant-row {
+    .assistant-row {
       justify-content: flex-start;
     }
 
+    .user-row {
+      justify-content: flex-end;
+    }
+
     .bubble {
-      max-width: 82%;
-      padding: 9px 11px;
-      border-radius: 12px;
-      font-size: 14.5px;
-      line-height: 1.35;
+      max-width: 76%;
+      padding: 12px 14px;
+      border-radius: 18px;
+      font-size: 15px;
+      line-height: 1.45;
       word-wrap: break-word;
     }
 
     .assistant-bubble {
-      background: #ffffff;
-      border: 1px solid #e5e7eb;
-      color: #111827;
-      border-top-left-radius: 4px;
+      background: white;
+      border: 1px solid var(--border);
+      border-top-left-radius: 6px;
+      box-shadow: 0 4px 18px rgba(15, 23, 42, 0.05);
     }
 
     .user-bubble {
-      background: #1a73e8;
-      color: #ffffff;
-      border-top-right-radius: 4px;
+      background: linear-gradient(135deg, var(--blue), #1d4ed8);
+      color: white;
+      border-top-right-radius: 6px;
+      box-shadow: 0 8px 22px rgba(37, 99, 235, 0.25);
     }
 
     .speaker {
       display: block;
-      font-weight: 700;
-      margin-bottom: 3px;
       font-size: 12px;
+      font-weight: 800;
+      margin-bottom: 5px;
     }
 
     .assistant-name {
-      color: #7a2f1d;
+      color: var(--brand);
     }
 
     .user-name {
-      color: #ffffff;
+      color: rgba(255,255,255,0.9);
     }
 
     .message-text {
@@ -148,131 +167,204 @@
     }
 
     a {
-      color: #0b57d0;
-      text-decoration: underline;
-      word-break: break-word;
+      color: #1d4ed8;
+      font-weight: 600;
+      text-decoration: none;
+      border-bottom: 1px solid rgba(37, 99, 235, 0.35);
+    }
+
+    a:hover {
+      border-bottom-color: #1d4ed8;
     }
 
     .user-bubble a {
-      color: #ffffff;
+      color: white;
+      border-bottom-color: rgba(255,255,255,0.5);
+    }
+
+    .composer-wrap {
+      padding: 14px;
+      border-top: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.94);
     }
 
     .composer {
       display: flex;
-      gap: 8px;
-      padding: 9px;
-      border-top: 1px solid #e5e7eb;
-      background: #ffffff;
-      flex-shrink: 0;
+      align-items: flex-end;
+      gap: 10px;
+      background: #f9fafb;
+      border: 1px solid #d1d5db;
+      border-radius: 18px;
+      padding: 8px;
+      transition: 0.15s;
+    }
+
+    .composer:focus-within {
+      border-color: var(--brand);
+      box-shadow: 0 0 0 4px rgba(122, 47, 29, 0.12);
+      background: white;
     }
 
     textarea {
       flex: 1;
-      min-height: 40px;
-      max-height: 100px;
-      padding: 9px 11px;
-      font-family: Arial, sans-serif;
-      font-size: 14.5px;
-      line-height: 1.3;
-      resize: none;
-      border: 1px solid #cbd5e1;
-      border-radius: 9px;
+      min-height: 42px;
+      max-height: 120px;
+      padding: 10px 12px;
+      border: none;
       outline: none;
-    }
-
-    textarea:focus {
-      border-color: #7a2f1d;
-      box-shadow: 0 0 0 2px rgba(122, 47, 29, 0.14);
+      resize: none;
+      background: transparent;
+      font: inherit;
+      font-size: 15px;
+      line-height: 1.35;
+      color: var(--text);
     }
 
     button {
-      width: 70px;
+      width: 84px;
+      height: 42px;
       border: none;
-      border-radius: 9px;
-      background: #7a2f1d;
-      color: #ffffff;
-      font-size: 14.5px;
-      font-weight: 700;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--brand), var(--brand-dark));
+      color: white;
+      font-size: 14px;
+      font-weight: 800;
       cursor: pointer;
-      transition: background 0.15s ease;
+      transition: 0.15s;
+      flex-shrink: 0;
     }
 
     button:hover {
-      background: #632615;
+      transform: translateY(-1px);
+      box-shadow: 0 8px 18px rgba(122, 47, 29, 0.25);
     }
 
     button:disabled {
       background: #9ca3af;
       cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .typing {
+      display: inline-flex;
+      gap: 4px;
+      align-items: center;
+      padding: 4px 0;
+    }
+
+    .typing span {
+      width: 6px;
+      height: 6px;
+      background: #9ca3af;
+      border-radius: 50%;
+      animation: bounce 1s infinite ease-in-out;
+    }
+
+    .typing span:nth-child(2) {
+      animation-delay: 0.15s;
+    }
+
+    .typing span:nth-child(3) {
+      animation-delay: 0.3s;
+    }
+
+    @keyframes bounce {
+      0%, 80%, 100% {
+        transform: translateY(0);
+        opacity: 0.5;
+      }
+      40% {
+        transform: translateY(-4px);
+        opacity: 1;
+      }
     }
 
     @media (max-width: 640px) {
       body {
         padding: 0;
-        background: #ffffff;
+        background: white;
       }
 
-      .benny-widget {
-        max-width: none;
+      .app {
         height: 100vh;
         border-radius: 0;
         border: none;
         box-shadow: none;
       }
 
+      .topbar {
+        padding: 12px;
+      }
+
+      .avatar {
+        width: 38px;
+        height: 38px;
+        border-radius: 12px;
+      }
+
+      .title strong {
+        font-size: 16px;
+      }
+
+      .title span {
+        font-size: 12px;
+      }
+
+      .pill {
+        display: none;
+      }
+
+      #chat {
+        padding: 14px;
+      }
+
       .bubble {
-        max-width: 92%;
-        font-size: 14px;
+        max-width: 90%;
+        font-size: 14.5px;
+        padding: 11px 13px;
       }
 
-      .composer {
-        padding: 8px;
-      }
-
-      textarea {
-        font-size: 14px;
-        min-height: 40px;
+      .composer-wrap {
+        padding: 10px;
       }
 
       button {
-        width: 64px;
-        font-size: 14px;
+        width: 68px;
       }
     }
   </style>
 </head>
 
 <body>
-
-  <div class="benny-widget">
-    <div class="benny-header">
-      <div class="avatar">B</div>
-
-      <div class="agent-info">
-        <strong>Benny</strong>
-        <span><span class="status-dot"></span>AI product advisor for Victory Musical Instruments</span>
+  <main class="app">
+    <header class="topbar">
+      <div class="identity">
+        <div class="avatar">B</div>
+        <div class="title">
+          <strong>Benny</strong>
+          <span>AI product advisor for Victory Musical Instruments</span>
+        </div>
       </div>
-    </div>
 
-    <div id="chat"></div>
+      <div class="pill">Beta assistant</div>
+    </header>
 
-    <div class="composer">
-      <textarea
-        id="message"
-        placeholder="Ask Benny something..."
-      ></textarea>
+    <section id="chat"></section>
 
-      <button id="sendButton" onclick="sendMessage()">
-        Send
-      </button>
-    </div>
-  </div>
+    <footer class="composer-wrap">
+      <div class="composer">
+        <textarea id="message" placeholder="Ask Benny about instruments, audio, video, or complete setups..."></textarea>
+        <button id="sendButton" onclick="sendMessage()">Send</button>
+      </div>
+    </footer>
+  </main>
 
   <script>
     const history = [];
 
     const initialGreeting =
-      "Hi! My name is Benny, and I’m your AI sales consultant today. Whether you're looking for musical instruments, audio gear, or video solutions, I’ll do my best to help you find the right solution. What brings you to Victory today?";
+      "Hi! My name is Benny, and I’m your AI sales consultant today. Whether you're looking for musical instruments, audio gear, video solutions, or a complete setup, I’ll do my best to guide you in the right direction. What brings you to Victory today?";
 
     function escapeHtml(text) {
       return String(text)
@@ -294,7 +386,7 @@
       );
     }
 
-    function addToChat(role, text) {
+    function addToChat(role, text, options = {}) {
       const chat = document.getElementById("chat");
 
       const row = document.createElement("div");
@@ -303,21 +395,33 @@
       const bubble = document.createElement("div");
       bubble.className = `bubble ${role === "user" ? "user-bubble" : "assistant-bubble"}`;
 
-      const speaker = document.createElement("span");
-      speaker.className = `speaker ${role === "user" ? "user-name" : "assistant-name"}`;
-      speaker.textContent = role === "user" ? "You" : "Benny";
+      if (options.typing) {
+        bubble.innerHTML = `
+          <span class="speaker assistant-name">Benny</span>
+          <div class="typing"><span></span><span></span><span></span></div>
+        `;
+        row.id = "typingRow";
+      } else {
+        const speaker = document.createElement("span");
+        speaker.className = `speaker ${role === "user" ? "user-name" : "assistant-name"}`;
+        speaker.textContent = role === "user" ? "You" : "Benny";
 
-      const messageText = document.createElement("div");
-      messageText.className = "message-text";
-      messageText.innerHTML = makeLinksClickable(text);
+        const messageText = document.createElement("div");
+        messageText.className = "message-text";
+        messageText.innerHTML = makeLinksClickable(text);
 
-      bubble.appendChild(speaker);
-      bubble.appendChild(messageText);
+        bubble.appendChild(speaker);
+        bubble.appendChild(messageText);
+      }
 
       row.appendChild(bubble);
       chat.appendChild(row);
-
       chat.scrollTop = chat.scrollHeight;
+    }
+
+    function removeTyping() {
+      const typing = document.getElementById("typingRow");
+      if (typing) typing.remove();
     }
 
     function addInitialGreeting() {
@@ -346,6 +450,7 @@
       });
 
       addToChat("user", message);
+      addToChat("assistant", "", { typing: true });
 
       try {
         const response = await fetch("/api/chat", {
@@ -360,6 +465,8 @@
 
         const data = await response.json();
 
+        removeTyping();
+
         const reply =
           data.reply ||
           data.error ||
@@ -372,16 +479,13 @@
         });
 
         addToChat("assistant", reply);
-
         console.log(data);
 
       } catch (error) {
+        removeTyping();
         console.error(error);
 
-        addToChat(
-          "assistant",
-          "Frontend error communicating with Benny."
-        );
+        addToChat("assistant", "Frontend error communicating with Benny.");
       } finally {
         button.disabled = false;
         button.textContent = "Send";
@@ -398,6 +502,5 @@
 
     addInitialGreeting();
   </script>
-
 </body>
 </html>
