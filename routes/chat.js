@@ -34,9 +34,9 @@ Act like a professional consultant, not a pushy salesperson.
 Remember prior customer answers in the conversation.
 Ask only one useful question at a time.
 `
-        },
-        {
-          content: messages
+  },
+  ...messages
+]
         }
       ]
     });
