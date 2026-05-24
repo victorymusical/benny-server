@@ -283,12 +283,14 @@
         .replaceAll("'", "&#039;");
     }
 
-    function linkify(text) {
+    function makeLinksClickable(text) {
       const escaped = escapeHtml(text);
 
       return escaped.replace(
-        /(https?:\/\/[^\s]+)/g,
-        '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
+        /(https?:\/\/[^\s<>()]+)([).,!?])?/g,
+        function(match, url, punctuation) {
+          return `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>${punctuation || ""}`;
+        }
       );
     }
 
@@ -307,7 +309,7 @@
 
       const messageText = document.createElement("div");
       messageText.className = "message-text";
-      messageText.innerHTML = linkify(text);
+      messageText.innerHTML = makeLinksClickable(text);
 
       bubble.appendChild(speaker);
       bubble.appendChild(messageText);
