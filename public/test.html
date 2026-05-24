@@ -21,6 +21,7 @@
 
     .message {
       margin-bottom: 14px;
+      line-height: 1.5;
     }
 
     .user {
@@ -31,6 +32,11 @@
     .assistant {
       font-weight: bold;
       color: #7a2f1d;
+    }
+
+    a {
+      color: #0b57d0;
+      text-decoration: underline;
     }
 
     input {
@@ -62,27 +68,32 @@
   <script>
     const history = [];
 
-    function addMessage(role, text) {
+    function linkify(text) {
+      return String(text).replace(
+        /(https?:\/\/[^\s]+)/g,
+        '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
+      );
+    }
+
+    function addToChat(role, text) {
       const chat = document.getElementById("chat");
 
       const div = document.createElement("div");
       div.className = "message";
 
       div.innerHTML = `
-        <span class="${role}">
+        <span class="${role === "user" ? "user" : "assistant"}">
           ${role === "user" ? "You" : "Benny"}:
         </span>
-        ${text}
+        ${linkify(text)}
       `;
 
       chat.appendChild(div);
-
       chat.scrollTop = chat.scrollHeight;
     }
 
     async function sendMessage() {
       const input = document.getElementById("message");
-
       const message = input.value.trim();
 
       if (!message) return;
@@ -94,10 +105,9 @@
         content: message
       });
 
-      addMessage("user", message);
+      addToChat("user", message);
 
       try {
-
         const response = await fetch("/api/chat", {
           method: "POST",
           headers: {
@@ -121,15 +131,14 @@
           content: reply
         });
 
-        addMessage("assistant", reply);
+        addToChat("assistant", reply);
 
         console.log(data);
 
       } catch (error) {
-
         console.error(error);
 
-        addMessage(
+        addToChat(
           "assistant",
           "Frontend error communicating with Benny."
         );
