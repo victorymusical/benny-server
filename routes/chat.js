@@ -21,7 +21,7 @@ function loadKnowledgeFile(filename) {
 function detectSearchQuery(messages) {
   const userText = messages
     .filter(m => m.role === "user")
-    .map(m => m.content.toLowerCase())
+    .map(m => String(m.content || "").toLowerCase())
     .join(" ");
 
   if (userText.includes("audio interface")) return "audio interface";
@@ -41,7 +41,7 @@ function detectSearchQuery(messages) {
 
 function detectBrandQuestion(messages) {
   const lastUserMessage =
-    messages.filter(m => m.role === "user").slice(-1)[0]?.content.toLowerCase() || "";
+    messages.filter(m => m.role === "user").slice(-1)[0]?.content?.toLowerCase() || "";
 
   return (
     lastUserMessage.includes("what brands") ||
@@ -53,13 +53,15 @@ function detectBrandQuestion(messages) {
 
 router.post("/", async (req, res) => {
   try {
-    const { messages } = req.body;
+    const { messages = [] } = req.body;
 
     const salesKnowledge = loadKnowledgeFile("sales-methodology.md");
     const conversationalRules = loadKnowledgeFile("conversational-rules.md");
     const categoryGovernance = loadKnowledgeFile("category-governance.md");
 
-    const searchQuery = detectSearchQuery(messages);
+    const normalizedCategory = normalizeCategoryFromMessages(messages);
+    const fallbackSearchQuery = detectSearchQuery(messages);
+    const searchQuery = normalizedCategory || fallbackSearchQuery;
     const isBrandQuestion = detectBrandQuestion(messages);
 
     let products = [];
@@ -95,6 +97,9 @@ ${conversationalRules}
 CATEGORY GOVERNANCE:
 ${categoryGovernance}
 
+NORMALIZED CATEGORY:
+${normalizedCategory || "None"}
+
 SEARCH QUERY USED:
 ${searchQuery}
 
@@ -117,7 +122,7 @@ Core behavior:
 - Never invent product names, brands, prices, specifications, or inventory
 - Only recommend products from REAL SHOPIFY PRODUCTS FOUND
 - If the customer asks what brands we carry, answer directly using BRANDS FOUND FROM SHOPIFY PRODUCTS
-- If no relevant brands or products are found, say you do not see a matching product in the current catalog and ask one better qualifying question
+- If no relevant brands or products are found, do not make absolute inventory claims. Ask one better qualifying question or say that you need to check availability.
 `
         },
         ...messages
@@ -126,6 +131,7 @@ Core behavior:
 
     res.json({
       reply: response.choices[0].message.content,
+      normalizedCategory,
       searchQuery,
       brands,
       products
