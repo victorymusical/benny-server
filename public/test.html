@@ -17,48 +17,57 @@
     }
 
     .page {
-      max-width: 980px;
+      max-width: 1040px;
       margin: 0 auto;
-      padding: 32px 20px;
+      padding: 18px 18px;
     }
 
     .header {
-      margin-bottom: 18px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 12px;
     }
 
     .header h1 {
       margin: 0;
-      font-size: 34px;
-      font-weight: 700;
+      font-size: 30px;
+      font-weight: 750;
       letter-spacing: -0.5px;
     }
 
     .header p {
-      margin: 6px 0 0;
-      color: #6b7280;
-      font-size: 15px;
+      margin: 4px 0 0;
+      color: #5f6b7a;
+      font-size: 14px;
     }
 
     .chat-shell {
       background: #ffffff;
       border: 1px solid #d7dce2;
       border-radius: 16px;
-      box-shadow: 0 12px 35px rgba(0, 0, 0, 0.08);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.07);
       overflow: hidden;
+      height: calc(100vh - 92px);
+      min-height: 620px;
+      display: flex;
+      flex-direction: column;
     }
 
     .chat-topbar {
       display: flex;
       align-items: center;
       gap: 12px;
-      padding: 16px 20px;
+      padding: 13px 18px;
       border-bottom: 1px solid #e5e7eb;
       background: #ffffff;
+      flex-shrink: 0;
     }
 
     .avatar {
-      width: 40px;
-      height: 40px;
+      width: 38px;
+      height: 38px;
       border-radius: 50%;
       background: #7a2f1d;
       color: #ffffff;
@@ -74,6 +83,7 @@
       display: block;
       font-size: 16px;
       color: #111827;
+      line-height: 1.2;
     }
 
     .agent-info span {
@@ -81,6 +91,7 @@
       color: #6b7280;
       font-size: 13px;
       margin-top: 2px;
+      line-height: 1.3;
     }
 
     .status-dot {
@@ -89,19 +100,19 @@
       background: #16a34a;
       border-radius: 50%;
       display: inline-block;
-      margin-right: 5px;
+      margin-right: 6px;
     }
 
     #chat {
-      height: 540px;
-      padding: 22px;
+      flex: 1;
+      padding: 20px;
       overflow-y: auto;
       background: #fafafa;
     }
 
     .message-row {
       display: flex;
-      margin-bottom: 16px;
+      margin-bottom: 14px;
     }
 
     .message-row.user-row {
@@ -113,9 +124,9 @@
     }
 
     .bubble {
-      max-width: 78%;
-      padding: 13px 15px;
-      border-radius: 15px;
+      max-width: 76%;
+      padding: 12px 14px;
+      border-radius: 14px;
       font-size: 15.5px;
       line-height: 1.45;
       white-space: pre-wrap;
@@ -163,16 +174,17 @@
     .composer {
       display: flex;
       gap: 10px;
-      padding: 14px;
+      padding: 12px;
       border-top: 1px solid #e5e7eb;
       background: #ffffff;
+      flex-shrink: 0;
     }
 
     textarea {
       flex: 1;
-      min-height: 48px;
-      max-height: 140px;
-      padding: 13px 14px;
+      min-height: 46px;
+      max-height: 120px;
+      padding: 12px 14px;
       font-family: Arial, sans-serif;
       font-size: 15.5px;
       line-height: 1.4;
@@ -188,7 +200,7 @@
     }
 
     button {
-      width: 92px;
+      width: 90px;
       border: none;
       border-radius: 10px;
       background: #7a2f1d;
@@ -209,10 +221,9 @@
     }
 
     .hint {
-      margin-top: 10px;
       color: #6b7280;
-      font-size: 12.5px;
-      text-align: right;
+      font-size: 12px;
+      white-space: nowrap;
     }
 
     @media (max-width: 640px) {
@@ -222,38 +233,43 @@
 
       .page {
         max-width: none;
-        min-height: 100vh;
+        height: 100vh;
         padding: 0;
         display: flex;
         flex-direction: column;
       }
 
       .header {
-        padding: 16px 14px 12px;
+        padding: 12px 14px;
         margin: 0;
+        display: block;
+        border-bottom: 1px solid #e5e7eb;
         background: #ffffff;
       }
 
       .header h1 {
-        font-size: 26px;
+        font-size: 24px;
       }
 
       .header p {
-        font-size: 13px;
+        font-size: 12.5px;
+      }
+
+      .hint {
+        display: none;
       }
 
       .chat-shell {
         border-radius: 0;
-        border-left: none;
-        border-right: none;
+        border: none;
         box-shadow: none;
+        height: auto;
+        min-height: 0;
         flex: 1;
-        display: flex;
-        flex-direction: column;
       }
 
       .chat-topbar {
-        padding: 12px 14px;
+        padding: 11px 14px;
       }
 
       .avatar {
@@ -271,9 +287,6 @@
       }
 
       #chat {
-        height: auto;
-        min-height: 0;
-        flex: 1;
         padding: 14px;
       }
 
@@ -290,17 +303,13 @@
 
       textarea {
         font-size: 15px;
-        min-height: 46px;
+        min-height: 44px;
         padding: 11px 12px;
       }
 
       button {
         width: 72px;
         font-size: 14px;
-      }
-
-      .hint {
-        display: none;
       }
     }
   </style>
@@ -310,8 +319,14 @@
 
   <div class="page">
     <div class="header">
-      <h1>Benny Test</h1>
-      <p>AI sales consultant for Victory Musical Instruments</p>
+      <div>
+        <h1>Benny Test</h1>
+        <p>AI product advisor for instruments, pro audio, video, and studio setup</p>
+      </div>
+
+      <div class="hint">
+        Enter to send · Shift + Enter for new line
+      </div>
     </div>
 
     <div class="chat-shell">
@@ -320,7 +335,7 @@
 
         <div class="agent-info">
           <strong>Benny</strong>
-          <span><span class="status-dot"></span>Musical instruments, audio gear, and video solutions</span>
+          <span><span class="status-dot"></span>Ready to help with product selection, setup, and checkout questions</span>
         </div>
       </div>
 
@@ -336,10 +351,6 @@
           Send
         </button>
       </div>
-    </div>
-
-    <div class="hint">
-      Press Enter to send. Shift + Enter for a new line.
     </div>
   </div>
 
