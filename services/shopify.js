@@ -11,6 +11,16 @@ function toNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+function extractNumericId(gid) {
+  if (!gid) return null;
+  return String(gid).split("/").pop();
+}
+
+function buildCartUrl(numericVariantId, quantity = 1) {
+  if (!numericVariantId) return null;
+  return `https://${SHOPIFY_STORE_DOMAIN}/cart/${numericVariantId}:${quantity}`;
+}
+
 export async function searchShopifyProducts(query, limit = 5) {
   if (!SHOPIFY_STORE_DOMAIN || !SHOPIFY_STOREFRONT_ACCESS_TOKEN) {
     throw new Error("Missing Shopify environment variables.");
@@ -57,6 +67,7 @@ export async function searchShopifyProducts(query, limit = 5) {
             variants(first: 10) {
               edges {
                 node {
+                  id
                   title
                   availableForSale
                   sku
@@ -112,6 +123,8 @@ export async function searchShopifyProducts(query, limit = 5) {
     const variants = product.variants.edges.map(v => {
       const variant = v.node;
 
+      const numericVariantId = extractNumericId(variant.id);
+
       const variantPriceAmount = toNumber(variant.price?.amount);
       const variantCompareAtAmount = toNumber(variant.compareAtPrice?.amount);
 
@@ -121,6 +134,8 @@ export async function searchShopifyProducts(query, limit = 5) {
         variantCompareAtAmount > variantPriceAmount;
 
       return {
+        id: variant.id,
+        numericVariantId,
         title: variant.title,
         sku: variant.sku,
         availableForSale: variant.availableForSale,
@@ -128,9 +143,15 @@ export async function searchShopifyProducts(query, limit = 5) {
         priceAmount: variantPriceAmount,
         compareAtPrice: formatMoney(variant.compareAtPrice),
         compareAtPriceAmount: variantCompareAtAmount,
-        isOnSale: variantIsOnSale
+        isOnSale: variantIsOnSale,
+        addToCartUrl: buildCartUrl(numericVariantId, 1)
       };
     });
+
+    const primaryVariant =
+      variants.find(variant => variant.availableForSale) ||
+      variants[0] ||
+      null;
 
     const isOnSale =
       compareAtPriceAmount !== null &&
@@ -154,6 +175,9 @@ export async function searchShopifyProducts(query, limit = 5) {
       compareAtPrice: formatMoney(compareAtMinPrice),
       compareAtPriceAmount,
       isOnSale,
+
+      primaryVariant,
+      addToCartUrl: primaryVariant?.addToCartUrl || null,
 
       variants
     };
