@@ -3,9 +3,8 @@ import client from "../services/openai.js";
 import fs from "fs";
 import path from "path";
 import { searchShopifyProducts } from "../services/shopify.js";
-import { normalizeCategoryFromMessages } from "../services/category.js";
 import { getVendorsForCategory } from "../services/vendors.js";
-import { classifyIntent } from "../services/intent.js";
+import { classifyIntentWithAI } from "../services/intentAI.js";
 
 const router = express.Router();
 
@@ -20,30 +19,34 @@ function loadKnowledgeFile(filename) {
   }
 }
 
-function buildSearchQuery(intentData, normalizedCategory) {
-  const parts = [];
+async function getProductsForIntent(intentData) {
+  const allProducts = [];
 
-  if (intentData.specificProductMentioned) {
-    parts.push(intentData.specificProductMentioned);
+  if (!intentData.requestedItems || intentData.requestedItems.length === 0) {
+    return allProducts;
   }
 
-  if (intentData.brandMentioned) {
-    parts.push(intentData.brandMentioned);
+  for (const item of intentData.requestedItems) {
+    const query =
+      item.searchQuery ||
+      [item.brand, item.product, item.category].filter(Boolean).join(" ");
+
+    if (!query) continue;
+
+    const products = await searchShopifyProducts(query, 10);
+
+    allProducts.push({
+      requestedItem: item,
+      searchQuery: query,
+      products
+    });
   }
 
-  if (intentData.categoryMentioned) {
-    parts.push(intentData.categoryMentioned);
-  }
+  return allProducts;
+}
 
-  if (parts.length > 0) {
-    return parts.join(" ");
-  }
-
-  if (normalizedCategory) {
-    return normalizedCategory;
-  }
-
-  return intentData.lastUserMessage || "";
+function flattenProducts(productGroups) {
+  return productGroups.flatMap(group => group.products || []);
 }
 
 router.post("/", async (req, res) => {
@@ -56,21 +59,28 @@ router.post("/", async (req, res) => {
     const greetingRules = loadKnowledgeFile("greeting-rules.md");
     const financingRules = loadKnowledgeFile("financing-rules.md");
 
-    const intentData = classifyIntent(messages);
-    const normalizedCategory =
-      intentData.categoryMentioned || normalizeCategoryFromMessages(messages);
+    const intentData = await classifyIntentWithAI(messages);
 
-    const searchQuery = buildSearchQuery(intentData, normalizedCategory);
+    const productGroups = await getProductsForIntent(intentData);
+    const products = flattenProducts(productGroups);
 
-    let products = [];
-    let categoryVendors = [];
+    const categories = [
+      ...new Set(
+        (intentData.requestedItems || [])
+          .map(item => item.category)
+          .filter(Boolean)
+      )
+    ];
 
-    if (searchQuery) {
-      products = await searchShopifyProducts(searchQuery, 20);
-    }
+    const categoryVendorResults = [];
 
-    if (normalizedCategory) {
-      categoryVendors = await getVendorsForCategory(normalizedCategory);
+    for (const category of categories) {
+      const vendors = await getVendorsForCategory(category);
+
+      categoryVendorResults.push({
+        category,
+        vendors
+      });
     }
 
     const productSearchVendors = [
@@ -86,11 +96,12 @@ router.post("/", async (req, res) => {
 
     const response = await client.chat.completions.create({
       model: "gpt-4.1-mini",
+      temperature: 0.3,
       messages: [
         {
           role: "system",
           content: `
-You are Benny, a consultative AI advisor for Victory Musical Instruments.
+You are Benny, a consultative AI sales advisor for Victory Musical Instruments.
 
 Follow this internal knowledge carefully.
 
@@ -106,50 +117,47 @@ ${categoryGovernance}
 GREETING RULES:
 ${greetingRules}
 
+FINANCING AND PAYMENT RULES:
+${financingRules}
+
 INTENT DATA:
 ${JSON.stringify(intentData, null, 2)}
 
-NORMALIZED CATEGORY:
-${normalizedCategory || "None"}
+SHOPIFY PRODUCT GROUPS FOUND:
+${JSON.stringify(productGroups, null, 2)}
 
-SEARCH QUERY USED:
-${searchQuery}
+ALL REAL SHOPIFY PRODUCTS FOUND:
+${JSON.stringify(products, null, 2)}
 
-CATEGORY VENDORS VERIFIED:
-${JSON.stringify(categoryVendors, null, 2)}
+CATEGORY VENDOR RESULTS:
+${JSON.stringify(categoryVendorResults, null, 2)}
 
 PRODUCT SEARCH VENDORS:
 ${JSON.stringify(productSearchVendors, null, 2)}
 
-REAL SHOPIFY PRODUCTS FOUND:
-${JSON.stringify(products, null, 2)}
-
 SALE PRODUCTS FOUND:
 ${JSON.stringify(saleProducts, null, 2)}
 
-FINANCING AND PAYMENT RULES:
-${financingRules}
-
 Core behavior:
-- Keep responses concise and helpful
-- Avoid filler conversation
-- Act like a professional consultant, not a pushy salesperson
-- Remember prior customer answers in the conversation
-- Ask only one useful question at a time
-- Never recommend products or brands outside VictoryMusical.com
-- Never invent product names, brands, prices, specifications, discounts, or inventory
-- If product data is available, answer directly from REAL SHOPIFY PRODUCTS FOUND
-- If the customer asks for price, discount, sale, availability, or link, answer directly from product data
-- You are allowed to provide product URLs from Shopify product data
-- Never say you cannot provide links if a product URL is available
-- Never tell the customer to wait while you check
-- If a product has isOnSale=true, explain that it is currently showing sale pricing
-- If compareAtPrice is higher than price, explain the current price and original compare-at price
-- If the customer asks what brands we carry, answer from CATEGORY VENDORS VERIFIED when available
-- Do not make absolute inventory claims from partial search results
-- Do not say we do not carry a brand unless the search was specific to that brand and returned no relevant products
-- If no relevant products or vendors are found, say you need to check availability instead of making absolute claims
-- If the customer is building a quote, summarize the quote clearly but do not claim that a real cart or order has been created yet
+- Keep responses concise and helpful.
+- Act like a professional consultant, not a pushy salesperson.
+- Remember prior customer answers in the conversation.
+- Ask only one useful question at a time.
+- Never recommend products or brands outside VictoryMusical.com.
+- Never invent product names, brands, prices, specifications, discounts, or inventory.
+- If product data is available, answer directly from ALL REAL SHOPIFY PRODUCTS FOUND.
+- If the customer asks for price, discount, sale, availability, or link, answer directly from product data.
+- You are allowed to provide product URLs from Shopify product data.
+- Never say you cannot provide links if a product URL is available.
+- Never tell the customer to wait while you check.
+- If a product has isOnSale=true, explain that it is currently showing sale pricing.
+- If compareAtPrice is higher than price, explain the current price and original compare-at price.
+- If the customer asks what brands we carry, answer from CATEGORY VENDOR RESULTS when available.
+- Do not make absolute inventory claims from partial search results.
+- Do not say we do not carry a brand unless the search was specific to that brand and returned no relevant products.
+- If no relevant products or vendors are found, say you need to confirm availability instead of making absolute claims.
+- If the customer is building a quote, summarize the requested items clearly but do not claim that a real cart or order has been created yet.
+- When the customer gives multiple products, treat it as a multi-item quote or cart-building request.
 `
         },
         ...messages
@@ -159,12 +167,11 @@ Core behavior:
     res.json({
       reply: response.choices[0].message.content,
       intentData,
-      normalizedCategory,
-      searchQuery,
-      categoryVendors,
+      productGroups,
+      products,
+      categoryVendorResults,
       productSearchVendors,
-      saleProducts,
-      products
+      saleProducts
     });
 
   } catch (error) {
