@@ -5,6 +5,7 @@ import path from "path";
 import { searchShopifyProducts } from "../services/shopify.js";
 import { normalizeCategoryFromMessages } from "../services/category.js";
 import { getVendorsForCategory } from "../services/vendors.js";
+import { classifyIntent } from "../services/intent.js";
 
 const router = express.Router();
 
@@ -19,51 +20,30 @@ function loadKnowledgeFile(filename) {
   }
 }
 
-function getLastUserMessage(messages) {
-  return messages.filter(m => m.role === "user").slice(-1)[0]?.content || "";
-}
+function buildSearchQuery(intentData, normalizedCategory) {
+  const parts = [];
 
-function detectSearchQuery(messages, normalizedCategory) {
-  const lastUserMessage = getLastUserMessage(messages).toLowerCase();
+  if (intentData.specificProductMentioned) {
+    parts.push(intentData.specificProductMentioned);
+  }
 
-  if (lastUserMessage.includes("apollo")) return "Apollo audio interface";
-  if (lastUserMessage.includes("universal audio")) return "Universal Audio audio interface";
-  if (lastUserMessage.includes("ik multimedia")) return "IK Multimedia audio interface";
-  if (lastUserMessage.includes("esi")) return "ESI audio interface";
+  if (intentData.brandMentioned) {
+    parts.push(intentData.brandMentioned);
+  }
 
-  if (normalizedCategory) return normalizedCategory;
+  if (intentData.categoryMentioned) {
+    parts.push(intentData.categoryMentioned);
+  }
 
-  const userText = messages
-    .filter(m => m.role === "user")
-    .map(m => String(m.content || "").toLowerCase())
-    .join(" ");
+  if (parts.length > 0) {
+    return parts.join(" ");
+  }
 
-  if (userText.includes("audio interface")) return "audio interface";
-  if (userText.includes("sound card")) return "audio interface";
-  if (userText.includes("recording interface")) return "audio interface";
-  if (userText.includes("usb interface")) return "audio interface";
-  if (userText.includes("microphone")) return "microphone";
-  if (userText.includes("headphone")) return "headphones";
-  if (userText.includes("saxophone") || userText.includes("sax")) return "saxophone";
-  if (userText.includes("trumpet")) return "trumpet";
-  if (userText.includes("trombone")) return "trombone";
-  if (userText.includes("clarinet")) return "clarinet";
-  if (userText.includes("flute")) return "flute";
+  if (normalizedCategory) {
+    return normalizedCategory;
+  }
 
-  return getLastUserMessage(messages);
-}
-
-function detectBrandQuestion(messages) {
-  const lastUserMessage = getLastUserMessage(messages).toLowerCase();
-
-  return (
-    lastUserMessage.includes("what brands") ||
-    lastUserMessage.includes("which brands") ||
-    lastUserMessage.includes("how many brands") ||
-    lastUserMessage.includes("brands do you carry") ||
-    lastUserMessage.includes("brands do you sell") ||
-    lastUserMessage.includes("brands do you offer")
-  );
+  return intentData.lastUserMessage || "";
 }
 
 router.post("/", async (req, res) => {
@@ -75,9 +55,11 @@ router.post("/", async (req, res) => {
     const categoryGovernance = loadKnowledgeFile("category-governance.md");
     const greetingRules = loadKnowledgeFile("greeting-rules.md");
 
-    const normalizedCategory = normalizeCategoryFromMessages(messages);
-    const isBrandQuestion = detectBrandQuestion(messages);
-    const searchQuery = detectSearchQuery(messages, normalizedCategory);
+    const intentData = classifyIntent(messages);
+    const normalizedCategory =
+      intentData.categoryMentioned || normalizeCategoryFromMessages(messages);
+
+    const searchQuery = buildSearchQuery(intentData, normalizedCategory);
 
     let products = [];
     let categoryVendors = [];
@@ -98,6 +80,8 @@ router.post("/", async (req, res) => {
           .map(v => v.trim())
       )
     ].sort();
+
+    const saleProducts = products.filter(product => product.isOnSale);
 
     const response = await client.chat.completions.create({
       model: "gpt-4.1-mini",
@@ -121,16 +105,16 @@ ${categoryGovernance}
 GREETING RULES:
 ${greetingRules}
 
+INTENT DATA:
+${JSON.stringify(intentData, null, 2)}
+
 NORMALIZED CATEGORY:
 ${normalizedCategory || "None"}
 
 SEARCH QUERY USED:
 ${searchQuery}
 
-CUSTOMER IS ASKING ABOUT BRANDS:
-${isBrandQuestion ? "YES" : "NO"}
-
-CATEGORY VENDORS VERIFIED FROM FILTERED PRODUCT CATEGORY:
+CATEGORY VENDORS VERIFIED:
 ${JSON.stringify(categoryVendors, null, 2)}
 
 PRODUCT SEARCH VENDORS:
@@ -139,6 +123,9 @@ ${JSON.stringify(productSearchVendors, null, 2)}
 REAL SHOPIFY PRODUCTS FOUND:
 ${JSON.stringify(products, null, 2)}
 
+SALE PRODUCTS FOUND:
+${JSON.stringify(saleProducts, null, 2)}
+
 Core behavior:
 - Keep responses concise and helpful
 - Avoid filler conversation
@@ -146,20 +133,19 @@ Core behavior:
 - Remember prior customer answers in the conversation
 - Ask only one useful question at a time
 - Never recommend products or brands outside VictoryMusical.com
-- Never invent product names, brands, prices, specifications, or inventory
-- If the customer asks what brands we carry, answer from CATEGORY VENDORS VERIFIED FROM FILTERED PRODUCT CATEGORY, not from generic product search
-- Do not mention StreamPath as an audio interface brand unless it appears in CATEGORY VENDORS VERIFIED FROM FILTERED PRODUCT CATEGORY
-- Do not say we do not carry a specific brand unless the product search specifically searched that brand and returned no relevant products
-- If the customer asks for Apollo, treat Apollo as Universal Audio and search for Apollo audio interfaces
-- If no relevant products or vendors are found, say you need to check availability instead of making absolute inventory claims
-- If the customer asks for price, discount, sale, availability, or link, answer directly from REAL SHOPIFY PRODUCTS FOUND when product data is available.
-- You are allowed to provide product URLs from the Shopify product data.
-- Never say you cannot provide direct links if a product URL is available.
-- Never tell the customer to wait while you check. Product data has already been retrieved before you respond.
-- If a product has isOnSale=true, explain that it is currently showing sale pricing.
-- If compareAtPrice is higher than price, explain the current price and original compare-at price.
-- If the customer asks for a specific product model, prioritize matching that product from REAL SHOPIFY PRODUCTS FOUND.
-- When the customer clearly asks for price or link, do not ask another qualifying question first. Answer the direct question, then optionally offer to help compare models.
+- Never invent product names, brands, prices, specifications, discounts, or inventory
+- If product data is available, answer directly from REAL SHOPIFY PRODUCTS FOUND
+- If the customer asks for price, discount, sale, availability, or link, answer directly from product data
+- You are allowed to provide product URLs from Shopify product data
+- Never say you cannot provide links if a product URL is available
+- Never tell the customer to wait while you check
+- If a product has isOnSale=true, explain that it is currently showing sale pricing
+- If compareAtPrice is higher than price, explain the current price and original compare-at price
+- If the customer asks what brands we carry, answer from CATEGORY VENDORS VERIFIED when available
+- Do not make absolute inventory claims from partial search results
+- Do not say we do not carry a brand unless the search was specific to that brand and returned no relevant products
+- If no relevant products or vendors are found, say you need to check availability instead of making absolute claims
+- If the customer is building a quote, summarize the quote clearly but do not claim that a real cart or order has been created yet
 `
         },
         ...messages
@@ -168,11 +154,12 @@ Core behavior:
 
     res.json({
       reply: response.choices[0].message.content,
+      intentData,
       normalizedCategory,
       searchQuery,
-      isBrandQuestion,
       categoryVendors,
       productSearchVendors,
+      saleProducts,
       products
     });
 
