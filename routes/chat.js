@@ -5,6 +5,13 @@ import path from "path";
 import { searchShopifyProducts } from "../services/shopify.js";
 import { getVendorsForCategory } from "../services/vendors.js";
 import { classifyIntentWithAI } from "../services/intentAI.js";
+import { buildTaxonomySearchQueries } from "../services/taxonomy.js";
+import {
+  validateProductGroups,
+  flattenValidatedProducts,
+  getMainProducts,
+  getAccessories
+} from "../services/productValidation.js";
 
 const router = express.Router();
 
@@ -25,6 +32,7 @@ function loadKnowledgeBase() {
     "conversational-rules.md",
     "category-governance.md",
     "greeting-rules.md",
+    "retrieval-safety-rules.md",
     "financing-rules.md",
     "financing-and-sales.md",
 
@@ -66,33 +74,42 @@ function loadKnowledgeBase() {
 }
 
 async function getProductsForIntent(intentData) {
-  const allProducts = [];
+  const productGroups = [];
+  const taxonomyQueries = buildTaxonomySearchQueries(intentData);
 
-  if (!intentData.requestedItems || intentData.requestedItems.length === 0) {
-    return allProducts;
-  }
+  for (const queryGroup of taxonomyQueries) {
+    const uniqueQueries = [
+      ...new Set(
+        (queryGroup.searchQueries || [])
+          .filter(Boolean)
+          .map(query => String(query).trim())
+          .filter(Boolean)
+      )
+    ];
 
-  for (const item of intentData.requestedItems) {
-    const query =
-      item.searchQuery ||
-      [item.brand, item.product, item.category].filter(Boolean).join(" ");
+    const combinedProducts = [];
 
-    if (!query) continue;
+    for (const query of uniqueQueries.slice(0, 4)) {
+      const products = await searchShopifyProducts(query, 10);
+      combinedProducts.push(...products);
+    }
 
-    const products = await searchShopifyProducts(query, 10);
+    const dedupedProducts = [
+      ...new Map(
+        combinedProducts.map(product => [product.handle, product])
+      ).values()
+    ];
 
-    allProducts.push({
-      requestedItem: item,
-      searchQuery: query,
-      products
+    productGroups.push({
+      requestedItem: queryGroup.requestedItem,
+      taxonomyCategory: queryGroup.taxonomyCategory,
+      collectionHandle: queryGroup.collectionHandle,
+      searchQueriesUsed: uniqueQueries.slice(0, 4),
+      products: dedupedProducts
     });
   }
 
-  return allProducts;
-}
-
-function flattenProducts(productGroups) {
-  return productGroups.flatMap(group => group.products || []);
+  return productGroups;
 }
 
 router.post("/", async (req, res) => {
@@ -103,8 +120,12 @@ router.post("/", async (req, res) => {
 
     const intentData = await classifyIntentWithAI(messages);
 
-    const productGroups = await getProductsForIntent(intentData);
-    const products = flattenProducts(productGroups);
+    const rawProductGroups = await getProductsForIntent(intentData);
+    const validatedProductGroups = validateProductGroups(rawProductGroups);
+
+    const products = flattenValidatedProducts(validatedProductGroups);
+    const mainProducts = getMainProducts(validatedProductGroups);
+    const accessories = getAccessories(validatedProductGroups);
 
     const categories = [
       ...new Set(
@@ -152,11 +173,20 @@ ${knowledgeBase}
 INTENT DATA:
 ${JSON.stringify(intentData, null, 2)}
 
-SHOPIFY PRODUCT GROUPS FOUND:
-${JSON.stringify(productGroups, null, 2)}
+RAW SHOPIFY PRODUCT GROUPS FOUND:
+${JSON.stringify(rawProductGroups, null, 2)}
 
-ALL REAL SHOPIFY PRODUCTS FOUND:
+VALIDATED PRODUCT GROUPS:
+${JSON.stringify(validatedProductGroups, null, 2)}
+
+ALL VALIDATED PRODUCTS:
 ${JSON.stringify(products, null, 2)}
+
+MAIN PRODUCTS ONLY:
+${JSON.stringify(mainProducts, null, 2)}
+
+ACCESSORIES FOUND:
+${JSON.stringify(accessories, null, 2)}
 
 CATEGORY VENDOR RESULTS:
 ${JSON.stringify(categoryVendorResults, null, 2)}
@@ -174,7 +204,9 @@ Core behavior:
 - Ask only one useful question at a time.
 - Never recommend products or brands outside VictoryMusical.com unless discussing special-order or quote-based consultation.
 - Never invent product names, brands, prices, specifications, discounts, or inventory.
-- If product data is available, answer directly from ALL REAL SHOPIFY PRODUCTS FOUND.
+- Prefer MAIN PRODUCTS ONLY when the customer asks for a main product or instrument.
+- Do not present accessories as main products unless the customer specifically asks for accessories.
+- If product data is available, answer directly from validated product data.
 - If the customer asks for price, discount, sale, availability, or link, answer directly from product data.
 - You are allowed to provide product URLs from Shopify product data.
 - When an addToCartUrl is available, include it as an Add to Cart link.
@@ -184,8 +216,10 @@ Core behavior:
 - If compareAtPrice is higher than price, explain the current price and original compare-at price.
 - If the customer asks what brands we carry, answer from CATEGORY VENDOR RESULTS when available.
 - Do not make absolute inventory claims from partial search results.
-- Do not say we do not carry a brand unless the search was specific to that brand and returned no relevant products.
-- If no relevant products or vendors are found, say you need to confirm availability instead of making absolute claims.
+- Failed product search does not mean unavailable.
+- Do not say Victory does not carry a product unless retrieval and validation strongly support that answer.
+- If retrieval is weak, say you are not seeing it clearly and recommend direct confirmation.
+- If no relevant products or vendors are found, use honest uncertainty instead of making absolute claims.
 - If the customer is building a quote, summarize the requested items clearly but do not claim that a real cart or order has been created yet.
 - When the customer gives multiple products, treat it as a multi-item quote or cart-building request.
 `
@@ -197,8 +231,11 @@ Core behavior:
     res.json({
       reply: response.choices[0].message.content,
       intentData,
-      productGroups,
+      rawProductGroups,
+      validatedProductGroups,
       products,
+      mainProducts,
+      accessories,
       categoryVendorResults,
       productSearchVendors,
       saleProducts
