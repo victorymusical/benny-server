@@ -400,6 +400,26 @@
       border-bottom-color: #fdf8f1;
     }
 
+    /* Render Shopify add-to-cart links as a button inside Benny responses */
+    .message-text a[href*="/cart/"] {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 8px;
+      padding: 9px 14px;
+      border-radius: 999px;
+      background: var(--accent);
+      color: #fdf8f1 !important;
+      border-bottom: none !important;
+      font-weight: 600;
+      text-decoration: none;
+      box-shadow: 0 4px 12px -4px rgba(122, 47, 29, 0.45);
+    }
+
+    .message-text a[href*="/cart/"]:hover {
+      background: var(--accent-deep);
+    }
+
     /* ────────────── QUICK ACTIONS ────────────── */
     .quick-actions {
       display: flex;
@@ -778,14 +798,27 @@
     function makeLinksClickable(text) {
       const escaped = escapeHtml(text);
 
-      return escaped.replace(
-        /(https?:\/\/[^\s<]+)/g,
+      // Convert Markdown links first: [Label](https://example.com)
+      let linked = escaped.replace(
+        /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+        function(match, label, url) {
+          const { cleanUrl, trailing } = stripTrailingUrlPunctuation(url);
+
+          return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer">${label}</a>${trailing}`;
+        }
+      );
+
+      // Convert any remaining raw URLs. Avoid relinking URLs already inside href attributes.
+      linked = linked.replace(
+        /(?<!href=")https?:\/\/[^\s<]+/g,
         function(match) {
           const { cleanUrl, trailing } = stripTrailingUrlPunctuation(match);
 
           return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer">${cleanUrl}</a>${trailing}`;
         }
       );
+
+      return linked;
     }
 
     function addToChat(role, text, options = {}) {
