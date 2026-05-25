@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Benny AI Embed</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    :root {
+      --bg: transparent;
+      --panel: #ffffff;
+      --panel-soft: #f8fafc;
+      --text: #111827;
+      --muted: #667085;
+      --border: #e5e7eb;
+      --border-strong: #d0d5dd;
+      --brand: #7a2f1d;
+      --brand-dark: #5f2315;
+      --brand-soft: #fff7ed;
+      --blue: #2563eb;
+      --blue-dark: #1d4ed8;
+      --success-bg: #dcfce7;
+      --success-border: #bbf7d0;
+      --success-text: #166534;
+      --shadow: 0 18px 45px rgba(15, 23, 42, 0.10);
+      --radius: 24px;
+    }
+
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      min-height: 100%;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    body {
+      padding: 0;
+      overflow: hidden;
+    }
+
+    .benny-embed {
+      width: 100%;
+      height: 100vh;
+      min-height: 640px;
+      background:
+        radial-gradient(circle at top left, rgba(122, 47, 29, 0.08), transparent 34%),
+        radial-gradient(circle at bottom right, rgba(37, 99, 235, 0.08), transparent 30%),
+        #ffffff;
+      border: 1px solid rgba(208, 213, 221, 0.95);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .benny-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.92);
+      backdrop-filter: blur(14px);
+      flex-shrink: 0;
+    }
+
+    .benny-identity {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .benny-avatar {
+      width: 44px;
+      height: 44px;
+      border-radius: 15px;
+      background: linear-gradient(135deg, var(--brand), #b45332);
+      color: #ffffff;
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+      font-size: 19px;
+      box-shadow: 0 8px 18px rgba(122, 47, 29, 0.22);
+      flex-shrink: 0;
+    }
+
+    .benny-title {
+      min-width: 0;
+    }
+
+    .benny-title strong {
+      display: block;
+      font-size: 18px;
+      line-height: 1.05;
+      letter-spacing: -0.01em;
+    }
+
+    .benny-title span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--success-text);
+      background: var(--success-bg);
+      border: 1px solid var(--success-border);
+      font-size: 12px;
+      font-weight: 600;
+      padding: 7px 11px;
+      border-radius: 999px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #16a34a;
+      box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.12);
+    }
+
+    #chat {
+      flex: 1;
+      overflow-y: auto;
+      padding: 18px;
+      scroll-behavior: smooth;
+    }
+
+    #chat::-webkit-scrollbar {
+      width: 10px;
+    }
+
+    #chat::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    #chat::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.65);
+      border-radius: 999px;
+      border: 3px solid transparent;
+      background-clip: padding-box;
+    }
+
+    .message-row {
+      display: flex;
+      margin-bottom: 12px;
+    }
+
+    .assistant-row {
+      justify-content: flex-start;
+    }
+
+    .user-row {
+      justify-content: flex-end;
+    }
+
+    .bubble {
+      max-width: 78%;
+      padding: 12px 14px;
+      border-radius: 18px;
+      font-size: 15px;
+      line-height: 1.45;
+      word-wrap: break-word;
+      overflow-wrap: anywhere;
+    }
+
+    .assistant-bubble {
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid var(--border);
+      border-top-left-radius: 7px;
+      box-shadow: 0 5px 20px rgba(15, 23, 42, 0.055);
+    }
+
+    .user-bubble {
+      background: linear-gradient(135deg, var(--blue), var(--blue-dark));
+      color: #ffffff;
+      border-top-right-radius: 7px;
+      box-shadow: 0 9px 22px rgba(37, 99, 235, 0.24);
+    }
+
+    .speaker {
+      display: block;
+      font-size: 12px;
+      font-weight: 800;
+      margin-bottom: 5px;
+      letter-spacing: 0.01em;
+    }
+
+    .assistant-name {
+      color: var(--brand);
+    }
+
+    .user-name {
+      color: rgba(255, 255, 255, 0.92);
+    }
+
+    .message-text {
+      white-space: pre-wrap;
+    }
+
+    .message-text a {
+      color: #1d4ed8;
+      font-weight: 700;
+      text-decoration: none;
+      border-bottom: 1px solid rgba(37, 99, 235, 0.35);
+    }
+
+    .message-text a:hover {
+      border-bottom-color: #1d4ed8;
+    }
+
+    .user-bubble .message-text a {
+      color: #ffffff;
+      border-bottom-color: rgba(255, 255, 255, 0.5);
+    }
+
+    .quick-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 0 18px 14px;
+      background: transparent;
+      flex-shrink: 0;
+    }
+
+    .quick-action {
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.8);
+      color: #344054;
+      border-radius: 999px;
+      padding: 8px 11px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: 0.15s ease;
+    }
+
+    .quick-action:hover {
+      border-color: rgba(122, 47, 29, 0.35);
+      color: var(--brand);
+      background: #ffffff;
+      transform: translateY(-1px);
+    }
+
+    .composer-wrap {
+      padding: 14px;
+      border-top: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.94);
+      backdrop-filter: blur(14px);
+      flex-shrink: 0;
+    }
+
+    .composer {
+      display: flex;
+      align-items: flex-end;
+      gap: 10px;
+      background: #ffffff;
+      border: 1px solid var(--border-strong);
+      border-radius: 18px;
+      padding: 8px;
+      transition: 0.15s ease;
+      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+    }
+
+    .composer:focus-within {
+      border-color: var(--brand);
+      box-shadow:
+        0 0 0 4px rgba(122, 47, 29, 0.12),
+        0 6px 18px rgba(15, 23, 42, 0.06);
+    }
+
+    textarea {
+      flex: 1;
+      min-height: 42px;
+      max-height: 120px;
+      padding: 10px 12px;
+      border: none;
+      outline: none;
+      resize: none;
+      background: transparent;
+      font: inherit;
+      font-size: 15px;
+      line-height: 1.35;
+      color: var(--text);
+    }
+
+    textarea::placeholder {
+      color: #98a2b3;
+    }
+
+    button {
+      width: 88px;
+      height: 44px;
+      border: none;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--brand), var(--brand-dark));
+      color: #ffffff;
+      font-size: 14px;
+      font-weight: 800;
+      cursor: pointer;
+      transition: 0.15s ease;
+      flex-shrink: 0;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 18px rgba(122, 47, 29, 0.25);
+    }
+
+    button:disabled {
+      background: #9ca3af;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .typing {
+      display: inline-flex;
+      gap: 4px;
+      align-items: center;
+      padding: 4px 0;
+    }
+
+    .typing span {
+      width: 6px;
+      height: 6px;
+      background: #9ca3af;
+      border-radius: 50%;
+      animation: bounce 1s infinite ease-in-out;
+    }
+
+    .typing span:nth-child(2) {
+      animation-delay: 0.15s;
+    }
+
+    .typing span:nth-child(3) {
+      animation-delay: 0.3s;
+    }
+
+    @keyframes bounce {
+      0%, 80%, 100% {
+        transform: translateY(0);
+        opacity: 0.5;
+      }
+
+      40% {
+        transform: translateY(-4px);
+        opacity: 1;
+      }
+    }
+
+    @media (max-width: 740px) {
+      .benny-embed {
+        min-height: 660px;
+        border-radius: 18px;
+      }
+
+      .benny-header {
+        padding: 13px 14px;
+      }
+
+      .benny-avatar {
+        width: 39px;
+        height: 39px;
+        border-radius: 13px;
+        font-size: 17px;
+      }
+
+      .benny-title strong {
+        font-size: 16px;
+      }
+
+      .benny-title span {
+        font-size: 12px;
+        max-width: 210px;
+      }
+
+      .status-pill {
+        display: none;
+      }
+
+      #chat {
+        padding: 14px;
+      }
+
+      .bubble {
+        max-width: 90%;
+        font-size: 14.5px;
+        padding: 11px 13px;
+      }
+
+      .quick-actions {
+        padding: 0 14px 12px;
+        gap: 7px;
+      }
+
+      .quick-action {
+        font-size: 12.5px;
+        padding: 7px 10px;
+      }
+
+      .composer-wrap {
+        padding: 10px;
+      }
+
+      .composer {
+        gap: 7px;
+        border-radius: 15px;
+      }
+
+      textarea {
+        font-size: 14.5px;
+        min-height: 42px;
+      }
+
+      button {
+        width: 68px;
+        height: 42px;
+        border-radius: 12px;
+      }
+    }
+
+    @media (max-width: 420px) {
+      .benny-title span {
+        max-width: 180px;
+      }
+
+      .quick-actions {
+        display: none;
+      }
+
+      .bubble {
+        max-width: 94%;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <main class="benny-embed">
+    <header class="benny-header">
+      <div class="benny-identity">
+        <div class="benny-avatar">B</div>
+
+        <div class="benny-title">
+          <strong>Benny</strong>
+          <span>AI product advisor for Victory Musical Instruments</span>
+        </div>
+      </div>
+
+      <div class="status-pill">
+        <span class="status-dot"></span>
+        Beta assistant
+      </div>
+    </header>
+
+    <section id="chat"></section>
+
+    <div class="quick-actions" id="quickActions">
+      <button class="quick-action" type="button" onclick="sendQuickMessage('Help me choose a saxophone')">
+        Choose a saxophone
+      </button>
+
+      <button class="quick-action" type="button" onclick="sendQuickMessage('Help me build a recording setup')">
+        Recording setup
+      </button>
+
+      <button class="quick-action" type="button" onclick="sendQuickMessage('Help me with church audio and streaming')">
+        Church audio & streaming
+      </button>
+
+      <button class="quick-action" type="button" onclick="sendQuickMessage('Help me build a school band quote')">
+        School band quote
+      </button>
+    </div>
+
+    <footer class="composer-wrap">
+      <div class="composer">
+        <textarea
+          id="message"
+          placeholder="Ask Benny about instruments, audio, video, or complete setups..."
+        ></textarea>
+
+        <button id="sendButton" onclick="sendMessage()">Send</button>
+      </div>
+    </footer>
+  </main>
+
+  <script>
+    const history = [];
+
+    const initialGreeting =
+      "Hi! My name is Benny, and I’m your AI sales consultant today. Whether you're looking for musical instruments, audio gear, video solutions, or a complete setup, I’ll do my best to guide you in the right direction. What brings you to Victory today?";
+
+    function escapeHtml(text) {
+      return String(text)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function stripTrailingUrlPunctuation(url) {
+      let cleanUrl = url;
+      let trailing = "";
+
+      while (/[).,!?:;]$/.test(cleanUrl)) {
+        trailing = cleanUrl.slice(-1) + trailing;
+        cleanUrl = cleanUrl.slice(0, -1);
+      }
+
+      return { cleanUrl, trailing };
+    }
+
+    function makeLinksClickable(text) {
+      const escaped = escapeHtml(text);
+
+      return escaped.replace(
+        /(https?:\/\/[^\s<]+)/g,
+        function(match) {
+          const { cleanUrl, trailing } = stripTrailingUrlPunctuation(match);
+
+          return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer">${cleanUrl}</a>${trailing}`;
+        }
+      );
+    }
+
+    function addToChat(role, text, options = {}) {
+      const chat = document.getElementById("chat");
+
+      const row = document.createElement("div");
+      row.className = `message-row ${role === "user" ? "user-row" : "assistant-row"}`;
+
+      const bubble = document.createElement("div");
+      bubble.className = `bubble ${role === "user" ? "user-bubble" : "assistant-bubble"}`;
+
+      if (options.typing) {
+        bubble.innerHTML = `
+          <span class="speaker assistant-name">Benny</span>
+          <div class="typing"><span></span><span></span><span></span></div>
+        `;
+        row.id = "typingRow";
+      } else {
+        const speaker = document.createElement("span");
+        speaker.className = `speaker ${role === "user" ? "user-name" : "assistant-name"}`;
+        speaker.textContent = role === "user" ? "You" : "Benny";
+
+        const messageText = document.createElement("div");
+        messageText.className = "message-text";
+        messageText.innerHTML = makeLinksClickable(text);
+
+        bubble.appendChild(speaker);
+        bubble.appendChild(messageText);
+      }
+
+      row.appendChild(bubble);
+      chat.appendChild(row);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function removeTyping() {
+      const typing = document.getElementById("typingRow");
+      if (typing) typing.remove();
+    }
+
+    function hideQuickActions() {
+      const quickActions = document.getElementById("quickActions");
+
+      if (quickActions) {
+        quickActions.style.display = "none";
+      }
+    }
+
+    function addInitialGreeting() {
+      history.push({
+        role: "assistant",
+        content: initialGreeting
+      });
+
+      addToChat("assistant", initialGreeting);
+    }
+
+    function sendQuickMessage(message) {
+      const input = document.getElementById("message");
+      input.value = message;
+      sendMessage();
+    }
+
+    async function sendMessage() {
+      const input = document.getElementById("message");
+      const button = document.getElementById("sendButton");
+      const message = input.value.trim();
+
+      if (!message) return;
+
+      hideQuickActions();
+
+      input.value = "";
+      button.disabled = true;
+      button.textContent = "...";
+
+      history.push({
+        role: "user",
+        content: message
+      });
+
+      addToChat("user", message);
+      addToChat("assistant", "", { typing: true });
+
+      try {
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            messages: history
+          })
+        });
+
+        const data = await response.json();
+
+        removeTyping();
+
+        const reply =
+          data.reply ||
+          data.error ||
+          data.details ||
+          "No reply returned.";
+
+        history.push({
+          role: "assistant",
+          content: reply
+        });
+
+        addToChat("assistant", reply);
+        console.log(data);
+
+      } catch (error) {
+        removeTyping();
+        console.error(error);
+
+        addToChat("assistant", "Frontend error communicating with Benny.");
+      } finally {
+        button.disabled = false;
+        button.textContent = "Send";
+        input.focus();
+      }
+    }
+
+    document.getElementById("message").addEventListener("keydown", function(event) {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        sendMessage();
+      }
+    });
+
+    addInitialGreeting();
+  </script>
+</body>
+</html>
