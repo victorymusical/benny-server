@@ -1,6 +1,11 @@
 const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN;
 const SHOPIFY_STOREFRONT_ACCESS_TOKEN = process.env.SHOPIFY_STOREFRONT_ACCESS_TOKEN;
 
+// Customer-facing domain for links shown in chat (e.g. victorymusical.com).
+// Falls back to the store domain if not set. Set SHOPIFY_PUBLIC_DOMAIN in
+// Railway to "victorymusical.com" so the dev myshopify.com URL never shows.
+const SHOPIFY_PUBLIC_DOMAIN = process.env.SHOPIFY_PUBLIC_DOMAIN || SHOPIFY_STORE_DOMAIN;
+
 function formatMoney(money) {
   if (!money) return null;
   return `${money.currencyCode} ${money.amount}`;
@@ -18,7 +23,7 @@ function extractNumericId(gid) {
 
 function buildCartUrl(numericVariantId, quantity = 1) {
   if (!numericVariantId) return null;
-  return `https://${SHOPIFY_STORE_DOMAIN}/cart/${numericVariantId}:${quantity}`;
+  return `https://${SHOPIFY_PUBLIC_DOMAIN}/cart/${numericVariantId}:${quantity}`;
 }
 
 export async function searchShopifyProducts(query, limit = 5) {
@@ -167,7 +172,7 @@ export async function searchShopifyProducts(query, limit = 5) {
       tags: product.tags,
       url:
         product.onlineStoreUrl ||
-        `https://${SHOPIFY_STORE_DOMAIN}/products/${product.handle}`,
+        `https://${SHOPIFY_PUBLIC_DOMAIN}/products/${product.handle}`,
       image: product.featuredImage?.url || null,
 
       price: formatMoney(minPrice),
