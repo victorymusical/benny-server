@@ -400,24 +400,152 @@
       border-bottom-color: #fdf8f1;
     }
 
-    /* Render Shopify add-to-cart links as a button inside Benny responses */
+    /* Stray cart URLs should never render as giant pills anymore. */
     .message-text a[href*="/cart/"] {
+      color: var(--accent);
+      text-decoration: underline;
+    }
+
+    /* ────────────── PRODUCT CARDS ────────────── */
+    .benny-card {
+      display: flex;
+      gap: 14px;
+      margin: 12px 0;
+      padding: 12px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      box-shadow: 0 6px 18px -12px rgba(15, 15, 15, 0.25);
+      align-items: stretch;
+    }
+
+    .benny-card-img {
+      flex: 0 0 84px;
+      width: 84px;
+      height: 84px;
+      object-fit: contain;
+      background: var(--bg-soft);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-hairline);
+    }
+
+    .benny-card-img.placeholder {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-faint);
+      font-family: var(--font-display);
+      font-size: 26px;
+    }
+
+    .benny-card-body {
+      flex: 1 1 auto;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .benny-card-vendor {
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    .benny-card-title {
+      font-weight: 600;
+      font-size: 14.5px;
+      line-height: 1.3;
+      color: var(--text-primary);
+    }
+
+    .benny-card-pricing {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      margin-top: 2px;
+    }
+
+    .benny-card-price {
+      font-weight: 700;
+      font-size: 15px;
+      color: var(--text-primary);
+    }
+
+    .benny-card-compare {
+      font-size: 12.5px;
+      color: var(--text-faint);
+      text-decoration: line-through;
+    }
+
+    .benny-card-badge {
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #fff;
+      background: var(--accent);
+      padding: 2px 7px;
+      border-radius: 999px;
+    }
+
+    .benny-card-stock {
+      font-size: 11.5px;
+      color: var(--live);
+    }
+
+    .benny-card-stock.out {
+      color: var(--text-muted);
+    }
+
+    .benny-card-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: auto;
+      padding-top: 8px;
+      flex-wrap: wrap;
+    }
+
+    a.benny-btn-cart,
+    a.benny-btn-view {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      margin-top: 8px;
-      padding: 9px 14px;
-      border-radius: 999px;
-      background: var(--accent);
-      color: #fdf8f1 !important;
-      border-bottom: none !important;
+      font-size: 12.5px;
       font-weight: 600;
       text-decoration: none;
-      box-shadow: 0 4px 12px -4px rgba(122, 47, 29, 0.45);
+      padding: 7px 14px;
+      border-radius: 999px;
+      transition: background 0.15s ease, color 0.15s ease;
     }
 
-    .message-text a[href*="/cart/"]:hover {
+    a.benny-btn-cart {
+      background: var(--accent);
+      color: #fdf8f1;
+      border: 1px solid var(--accent);
+    }
+
+    a.benny-btn-cart:hover {
       background: var(--accent-deep);
+    }
+
+    a.benny-btn-view {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--border-default);
+    }
+
+    a.benny-btn-view:hover {
+      border-color: var(--accent);
+    }
+
+    @media (max-width: 520px) {
+      .benny-card-img {
+        flex-basis: 64px;
+        width: 64px;
+        height: 64px;
+      }
     }
 
     /* ────────────── QUICK ACTIONS ────────────── */
@@ -821,6 +949,190 @@
       return linked;
     }
 
+    function formatPrice(product) {
+      if (!product) return null;
+
+      if (typeof product.priceAmount === "number") {
+        const symbol = product.currencyCode === "USD" || !product.currencyCode
+          ? "$"
+          : product.currencyCode + " ";
+        return symbol + product.priceAmount.toFixed(2);
+      }
+
+      if (product.price) {
+        // Turn "USD 299.99" into "$299.99".
+        const parts = String(product.price).split(" ");
+        if (parts.length === 2 && parts[0] === "USD") return "$" + parts[1];
+        return product.price;
+      }
+
+      return null;
+    }
+
+    function formatCompare(product) {
+      if (!product) return null;
+      if (typeof product.compareAtPriceAmount === "number") {
+        return "$" + product.compareAtPriceAmount.toFixed(2);
+      }
+      if (product.compareAtPrice) {
+        const parts = String(product.compareAtPrice).split(" ");
+        if (parts.length === 2 && parts[0] === "USD") return "$" + parts[1];
+        return product.compareAtPrice;
+      }
+      return null;
+    }
+
+    function buildProductCard(product) {
+      const card = document.createElement("div");
+      card.className = "benny-card";
+
+      // Image or placeholder
+      if (product.image) {
+        const img = document.createElement("img");
+        img.className = "benny-card-img";
+        img.setAttribute("src", product.image);
+        img.setAttribute("alt", product.title || "Product");
+        img.setAttribute("loading", "lazy");
+        card.appendChild(img);
+      } else {
+        const ph = document.createElement("div");
+        ph.className = "benny-card-img placeholder";
+        ph.textContent = "♪";
+        card.appendChild(ph);
+      }
+
+      const body = document.createElement("div");
+      body.className = "benny-card-body";
+
+      if (product.vendor) {
+        const vendor = document.createElement("div");
+        vendor.className = "benny-card-vendor";
+        vendor.textContent = product.vendor;
+        body.appendChild(vendor);
+      }
+
+      const title = document.createElement("div");
+      title.className = "benny-card-title";
+      title.textContent = product.title || "Product";
+      body.appendChild(title);
+
+      const price = formatPrice(product);
+      if (price) {
+        const pricing = document.createElement("div");
+        pricing.className = "benny-card-pricing";
+
+        const priceEl = document.createElement("span");
+        priceEl.className = "benny-card-price";
+        priceEl.textContent = price;
+        pricing.appendChild(priceEl);
+
+        const compare = formatCompare(product);
+        if (product.isOnSale && compare) {
+          const compareEl = document.createElement("span");
+          compareEl.className = "benny-card-compare";
+          compareEl.textContent = compare;
+          pricing.appendChild(compareEl);
+
+          const badge = document.createElement("span");
+          badge.className = "benny-card-badge";
+          badge.textContent = "Sale";
+          pricing.appendChild(badge);
+        }
+
+        body.appendChild(pricing);
+      }
+
+      if (product.available === true) {
+        const stock = document.createElement("div");
+        stock.className = "benny-card-stock";
+        stock.textContent = "In stock";
+        body.appendChild(stock);
+      } else if (product.available === false) {
+        const stock = document.createElement("div");
+        stock.className = "benny-card-stock out";
+        stock.textContent = "Ask us to confirm availability";
+        body.appendChild(stock);
+      }
+
+      const actions = document.createElement("div");
+      actions.className = "benny-card-actions";
+
+      if (product.addToCartUrl) {
+        const cart = document.createElement("a");
+        cart.className = "benny-btn-cart";
+        cart.setAttribute("href", product.addToCartUrl);
+        cart.setAttribute("target", "_blank");
+        cart.setAttribute("rel", "noopener noreferrer");
+        cart.textContent = "Add to Cart";
+        actions.appendChild(cart);
+      }
+
+      if (product.url) {
+        const view = document.createElement("a");
+        view.className = "benny-btn-view";
+        view.setAttribute("href", product.url);
+        view.setAttribute("target", "_blank");
+        view.setAttribute("rel", "noopener noreferrer");
+        view.textContent = "View details";
+        actions.appendChild(view);
+      }
+
+      if (actions.children.length) body.appendChild(actions);
+
+      card.appendChild(body);
+      return card;
+    }
+
+    function findProductByHandle(products, rawHandle) {
+      if (!products || !products.length) return null;
+      const handle = String(rawHandle || "").trim().toLowerCase();
+      if (!handle) return null;
+
+      let match = products.find(p => (p.handle || "").toLowerCase() === handle);
+      if (match) return match;
+
+      match = products.find(p => {
+        const h = (p.handle || "").toLowerCase();
+        return h && (h.includes(handle) || handle.includes(h));
+      });
+      if (match) return match;
+
+      // Last resort: match by title text.
+      return products.find(p =>
+        (p.title || "").toLowerCase().includes(handle)
+      ) || null;
+    }
+
+    function renderAssistantBody(container, text, products) {
+      const parts = String(text).split(/\[\[PRODUCT:([^\]]+)\]\]/g);
+      let cardsRendered = 0;
+
+      parts.forEach((part, index) => {
+        const isMarker = index % 2 === 1;
+
+        if (isMarker) {
+          const product = findProductByHandle(products, part);
+          if (product) {
+            container.appendChild(buildProductCard(product));
+            cardsRendered += 1;
+          }
+        } else if (part && part.trim()) {
+          const textDiv = document.createElement("div");
+          textDiv.className = "message-text";
+          textDiv.innerHTML = makeLinksClickable(part.trim());
+          container.appendChild(textDiv);
+        }
+      });
+
+      // Fallback: model gave no usable markers but we have products. Show the
+      // top few so the customer always gets clickable cards.
+      if (cardsRendered === 0 && products && products.length) {
+        products.slice(0, 4).forEach(product => {
+          container.appendChild(buildProductCard(product));
+        });
+      }
+    }
+
     function addToChat(role, text, options = {}) {
       const chat = document.getElementById("chat");
 
@@ -840,13 +1152,19 @@
         const speaker = document.createElement("span");
         speaker.className = `speaker ${role === "user" ? "user-name" : "assistant-name"}`;
         speaker.textContent = role === "user" ? "You" : "Benny";
-
-        const messageText = document.createElement("div");
-        messageText.className = "message-text";
-        messageText.innerHTML = makeLinksClickable(text);
-
         bubble.appendChild(speaker);
-        bubble.appendChild(messageText);
+
+        if (role === "user") {
+          const messageText = document.createElement("div");
+          messageText.className = "message-text";
+          messageText.innerHTML = makeLinksClickable(text);
+          bubble.appendChild(messageText);
+        } else {
+          const content = document.createElement("div");
+          content.className = "benny-content";
+          renderAssistantBody(content, text, options.products || []);
+          bubble.appendChild(content);
+        }
       }
 
       row.appendChild(bubble);
@@ -929,7 +1247,7 @@
           content: reply
         });
 
-        addToChat("assistant", reply);
+        addToChat("assistant", reply, { products: data.recommendedProducts || [] });
         console.log(data);
 
       } catch (error) {
