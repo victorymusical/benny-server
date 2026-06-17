@@ -10,14 +10,14 @@ import {
   validateProductGroups,
   flattenValidatedProducts,
   getMainProducts,
-  getAccessories
+  getAccessories,
+  buildRecommendedProducts
 } from "../services/productValidation.js";
 
 const router = express.Router();
 
 function loadKnowledgeFile(filename) {
   const filePath = path.join(process.cwd(), "knowledge", filename);
-
   try {
     return fs.readFileSync(filePath, "utf8");
   } catch (error) {
@@ -35,23 +35,19 @@ function loadKnowledgeBase() {
     "retrieval-safety-rules.md",
     "financing-rules.md",
     "financing-and-sales.md",
-
     "saxophones.md",
     "reed-instruments.md",
     "flutes-piccolos.md",
     "high-brass.md",
     "low-brass.md",
     "trombones.md",
-
     "guitars.md",
     "bass-guitars.md",
     "keys-and-synths.md",
-
     "drums.md",
     "percussion.md",
     "orchestral-strings.md",
     "band-and-orchestra-programs.md",
-
     "audio-interfaces.md",
     "microphones.md",
     "headphones-and-monitoring.md",
@@ -67,10 +63,7 @@ function loadKnowledgeBase() {
   return knowledgeFiles
     .map(file => {
       const content = loadKnowledgeFile(file);
-
-      return content
-        ? `\n\n===== ${file} =====\n\n${content}`
-        : "";
+      return content ? `\n\n===== ${file} =====\n\n${content}` : "";
     })
     .join("\n");
 }
@@ -97,9 +90,7 @@ async function getProductsForIntent(intentData) {
     }
 
     const dedupedProducts = [
-      ...new Map(
-        combinedProducts.map(product => [product.handle, product])
-      ).values()
+      ...new Map(combinedProducts.map(product => [product.handle, product])).values()
     ];
 
     productGroups.push({
@@ -129,6 +120,10 @@ router.post("/", async (req, res) => {
     const mainProducts = getMainProducts(validatedProductGroups);
     const accessories = getAccessories(validatedProductGroups);
 
+    // ONE clean, ranked list. This is what Benny recommends from and what the
+    // product cards on the page will render.
+    const recommendedProducts = buildRecommendedProducts(validatedProductGroups, 8);
+
     const categories = [
       ...new Set(
         (intentData.requestedItems || [])
@@ -138,26 +133,12 @@ router.post("/", async (req, res) => {
     ];
 
     const categoryVendorResults = [];
-
     for (const category of categories) {
       const vendors = await getVendorsForCategory(category);
-
-      categoryVendorResults.push({
-        category,
-        vendors
-      });
+      categoryVendorResults.push({ category, vendors });
     }
 
-    const productSearchVendors = [
-      ...new Set(
-        products
-          .map(p => p.vendor)
-          .filter(Boolean)
-          .map(v => v.trim())
-      )
-    ].sort();
-
-    const saleProducts = products.filter(product => product.isOnSale);
+    const saleProducts = recommendedProducts.filter(product => product.isOnSale);
 
     const response = await client.chat.completions.create({
       model: "gpt-4.1-mini",
@@ -168,62 +149,51 @@ router.post("/", async (req, res) => {
           content: `
 You are Benny, a consultative AI sales advisor for Victory Musical Instruments.
 
-Use the following internal knowledge carefully:
+Use the following internal knowledge for tone, policy, and product guidance:
 
 ${knowledgeBase}
 
-INTENT DATA:
+WHAT THE CUSTOMER IS ASKING FOR (parsed intent):
 ${JSON.stringify(intentData, null, 2)}
 
-RAW SHOPIFY PRODUCT GROUPS FOUND:
-${JSON.stringify(rawProductGroups, null, 2)}
+RECOMMENDED PRODUCTS (already ranked best-first from a live store search. Recommend from THIS list):
+${JSON.stringify(recommendedProducts, null, 2)}
 
-VALIDATED PRODUCT GROUPS:
-${JSON.stringify(validatedProductGroups, null, 2)}
-
-ALL VALIDATED PRODUCTS:
-${JSON.stringify(products, null, 2)}
-
-MAIN PRODUCTS ONLY:
-${JSON.stringify(mainProducts, null, 2)}
-
-ACCESSORIES FOUND:
-${JSON.stringify(accessories, null, 2)}
-
-CATEGORY VENDOR RESULTS:
+BRANDS FOUND BY CATEGORY (use only to answer "what brands do you carry" style questions):
 ${JSON.stringify(categoryVendorResults, null, 2)}
 
-PRODUCT SEARCH VENDORS:
-${JSON.stringify(productSearchVendors, null, 2)}
+HOW TO ANSWER:
+- Be concise, warm, and consultative. You are a guide, not a pushy salesperson.
+- Ask only one useful question at a time. Remember earlier answers in the conversation.
+- Recommend the best fits from RECOMMENDED PRODUCTS, best first.
+- The list is already ranked and de-duplicated. Items lower in the list with a
+  matchLabel of "accessory" are add-ons, not the main item, unless the customer
+  asked for an accessory.
+- Never invent product names, brands, prices, specs, discounts, or inventory.
+- When a product has an addToCartUrl, include that exact Add to Cart link for it
+  so the customer can add it with one click. Always include the link when it exists.
+- If a product isOnSale is true, mention it is currently on sale, and if
+  compareAtPrice is present and higher than price, mention the original price too.
 
-SALE PRODUCTS FOUND:
-${JSON.stringify(saleProducts, null, 2)}
+AVAILABILITY RULES (very important, this prevents wrong answers):
+- NEVER say or imply that Victory does not carry a brand, product, or category.
+- A short or empty search result does NOT mean the item is unavailable. It only
+  means you are not seeing it clearly right now.
+- If RECOMMENDED PRODUCTS is empty or nothing fits, say something like: "I'm not
+  seeing that clearly in my current search, so I don't want to give you wrong
+  info. We very likely can still help. The team can confirm availability and
+  options for you." Then offer the human handoff. Do not guess that it is unavailable.
+- Only discuss brands as carried/not carried based on real product or vendor data,
+  never from memory or assumption.
 
-Core behavior:
-- Keep responses concise and helpful.
-- Act like a professional consultant, not a pushy salesperson.
-- Remember prior customer answers in the conversation.
-- Ask only one useful question at a time.
-- Never recommend products or brands outside VictoryMusical.com unless discussing special-order or quote-based consultation.
-- Never invent product names, brands, prices, specifications, discounts, or inventory.
-- Prefer MAIN PRODUCTS ONLY when the customer asks for a main product or instrument.
-- Do not present accessories as main products unless the customer specifically asks for accessories.
-- If product data is available, answer directly from validated product data.
-- If the customer asks for price, discount, sale, availability, or link, answer directly from product data.
-- You are allowed to provide product URLs from Shopify product data.
-- When an addToCartUrl is available, include it as an Add to Cart link.
-- Never say you cannot provide links if a product URL is available.
-- Never tell the customer to wait while you check.
-- If a product has isOnSale=true, explain that it is currently showing sale pricing.
-- If compareAtPrice is higher than price, explain the current price and original compare-at price.
-- If the customer asks what brands we carry, answer from CATEGORY VENDOR RESULTS when available.
-- Do not make absolute inventory claims from partial search results.
-- Failed product search does not mean unavailable.
-- Do not say Victory does not carry a product unless retrieval and validation strongly support that answer.
-- If retrieval is weak, say you are not seeing it clearly and recommend direct confirmation.
-- If no relevant products or vendors are found, use honest uncertainty instead of making absolute claims.
-- If the customer is building a quote, summarize the requested items clearly but do not claim that a real cart or order has been created yet.
-- When the customer gives multiple products, treat it as a multi-item quote or cart-building request.
+THE BENNY MODEL (how you help):
+- Help the customer explore, learn, compare, and build a cart or a full system.
+- You can build out a multi-item cart or quote when asked, and summarize the items
+  clearly. Do not claim a real order has been placed.
+- When the customer is ready, invite them to confirm final availability, pricing,
+  and details with a Victory team member during business hours. Frame this as the
+  natural next step, not as you being unable to help.
+- Do not overpromise. It is fine to say the team can finalize things you cannot.
 `
         },
         ...messages
@@ -233,19 +203,17 @@ Core behavior:
     res.json({
       reply: response.choices[0].message.content,
       intentData,
+      recommendedProducts,
       rawProductGroups,
       validatedProductGroups,
       products,
       mainProducts,
       accessories,
       categoryVendorResults,
-      productSearchVendors,
       saleProducts
     });
-
   } catch (error) {
     console.error(error);
-
     res.status(500).json({
       error: "Benny encountered an error.",
       details: error.message
