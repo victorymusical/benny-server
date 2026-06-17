@@ -205,14 +205,20 @@ export function getAccessories(validatedGroups = []) {
 // Trim a product down to only what the AI and the product cards need.
 function slimProduct(product = {}) {
   const v = product.primaryVariant || null;
+  const currencyCode = (product.price || "").split(" ")[0] || null;
   return {
+    handle: product.handle,
     title: product.title,
     vendor: product.vendor,
     productType: product.productType,
     url: product.url,
     image: product.image,
     price: product.price,
+    priceAmount: typeof product.priceAmount === "number" ? product.priceAmount : null,
     compareAtPrice: product.compareAtPrice,
+    compareAtPriceAmount:
+      typeof product.compareAtPriceAmount === "number" ? product.compareAtPriceAmount : null,
+    currencyCode,
     isOnSale: product.isOnSale,
     available: v ? v.availableForSale : null,
     sku: v ? v.sku : null,
