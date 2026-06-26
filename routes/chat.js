@@ -3,6 +3,8 @@ import client from "../services/openai.js";
 import fs from "fs";
 import path from "path";
 import { searchShopifyProducts, getCollectionProducts } from "../services/shopify.js";
+import { getCatalogCount, getLastSync } from "../services/catalog.js";
+import { searchCatalogProducts } from "../services/catalogSearch.js";
 import { getVendorsForCategory } from "../services/vendors.js";
 import { classifyIntentWithAI } from "../services/intentAI.js";
 import { buildTaxonomySearchQueries } from "../services/taxonomy.js";
@@ -105,46 +107,68 @@ function loadKnowledgeBase(messages, intentData) {
 }
 
 async function getProductsForIntent(intentData) {
-  const productGroups = [];
   const taxonomyQueries = buildTaxonomySearchQueries(intentData);
+  const catalogCount = getCatalogCount();
+  const catalogGroups = catalogCount
+    ? searchCatalogProducts(taxonomyQueries, { limitPerGroup: 80, minScore: 18 })
+    : [];
 
-  for (const queryGroup of taxonomyQueries) {
-    const combinedProducts = [];
+  const productGroups = [];
 
-    // 1. If we know the real collection, pull from it first. This is the
-    //    authoritative source for a category browse (e.g. real PA speakers),
-    //    so we never substitute a desk monitor for a sanctuary speaker.
-    if (queryGroup.collectionHandle) {
-      const collectionProducts = await getCollectionProducts(queryGroup.collectionHandle, 30);
-      combinedProducts.push(...collectionProducts);
-    }
+  for (let index = 0; index < taxonomyQueries.length; index += 1) {
+    const queryGroup = taxonomyQueries[index];
+    const catalogProducts = catalogGroups[index]?.products || [];
+    const combinedProducts = [...catalogProducts];
 
-    // 2. Always also run the most specific text query, so a named brand or model
-    //    surfaces even if it is not in the first page of the collection, and so
-    //    categories without a collection still return results.
-    const textQueries = [
-      ...new Set(
-        (queryGroup.searchQueries || [])
-          .filter(Boolean)
-          .map(q => String(q).trim())
-          .filter(Boolean)
-      )
-    ];
+    // Shopify live search is now a backup, not Benny's main brain. Use it only
+    // when the local catalog is empty or the local match set is too thin.
+    const needsShopifyFallback = catalogProducts.length < 8;
 
-    const queryBudget = queryGroup.collectionHandle ? 2 : 3;
-    for (const query of textQueries.slice(0, queryBudget)) {
-      const products = await searchShopifyProducts(query, 10);
-      combinedProducts.push(...products);
+    if (needsShopifyFallback) {
+      try {
+        if (queryGroup.collectionHandle) {
+          const collectionProducts = await getCollectionProducts(queryGroup.collectionHandle, 60);
+          combinedProducts.push(...collectionProducts.map(product => ({
+            ...product,
+            retrievalSource: "shopify_collection_fallback"
+          })));
+        }
+
+        const textQueries = [
+          ...new Set(
+            (queryGroup.searchQueries || [])
+              .filter(Boolean)
+              .map(q => String(q).trim())
+              .filter(Boolean)
+          )
+        ];
+
+        const queryBudget = queryGroup.collectionHandle ? 3 : 5;
+        for (const query of textQueries.slice(0, queryBudget)) {
+          const products = await searchShopifyProducts(query, 20);
+          combinedProducts.push(...products.map(product => ({
+            ...product,
+            retrievalSource: "shopify_search_fallback"
+          })));
+        }
+      } catch (error) {
+        console.warn("Shopify fallback search failed:", error.message);
+      }
     }
 
     const dedupedProducts = [
-      ...new Map(combinedProducts.map(product => [product.handle, product])).values()
+      ...new Map(
+        combinedProducts
+          .filter(product => product && product.handle)
+          .map(product => [product.handle, product])
+      ).values()
     ];
 
     productGroups.push({
       requestedItem: queryGroup.requestedItem,
       taxonomyCategory: queryGroup.taxonomyCategory,
       collectionHandle: queryGroup.collectionHandle,
+      source: catalogProducts.length ? "local_catalog" : "shopify_fallback",
       products: dedupedProducts
     });
   }
@@ -166,7 +190,12 @@ router.post("/", async (req, res) => {
     const mainProducts = getMainProducts(validatedProductGroups);
     const accessories = getAccessories(validatedProductGroups);
 
-    const recommendedProducts = buildRecommendedProducts(validatedProductGroups, 8);
+    const recommendedProducts = buildRecommendedProducts(validatedProductGroups, 12);
+
+    const catalogStatus = {
+      productCount: getCatalogCount(),
+      lastSync: getLastSync()
+    };
 
     const categories = [
       ...new Set(
@@ -185,7 +214,7 @@ router.post("/", async (req, res) => {
     const saleProducts = recommendedProducts.filter(product => product.isOnSale);
 
     const response = await client.chat.completions.create({
-      model: "gpt-4.1-mini",
+      model: process.env.BENNY_MODEL || "gpt-4.1",
       temperature: 0.3,
       messages: [
         {
@@ -200,7 +229,10 @@ ${knowledgeBase}
 WHAT THE CUSTOMER IS ASKING FOR (parsed intent):
 ${JSON.stringify(intentData, null, 2)}
 
-RECOMMENDED PRODUCTS (already ranked best-first from live store collections and search. Recommend from THIS list):
+CATALOG STATUS:
+${JSON.stringify(catalogStatus, null, 2)}
+
+RECOMMENDED PRODUCTS (verified real Victory catalog matches, ranked best-first. Recommend specific products ONLY from THIS list):
 ${JSON.stringify(recommendedProducts, null, 2)}
 
 BRANDS FOUND BY CATEGORY (use only to answer "what brands do you carry" style questions):
@@ -210,9 +242,9 @@ YOUR TWO JOBS (read this carefully):
 You have two different jobs, and they follow different rules.
 
 JOB 1 - DESIGN AND EDUCATE (use your full expertise):
-- Use everything you know about music gear, audio, and system design, together with
-  the knowledge above, to work out what the customer actually needs. Think like a
-  systems engineer here.
+- Use your broad world knowledge about music gear, audio, video, instruments, and
+  system design, together with the knowledge above, to work out what the customer
+  actually needs. Think like a systems engineer and an experienced salesperson here.
 - For a room or venue, reason about the whole signal chain and the roles that must be
   filled: main speakers sized to the room, a subwoofer if needed, a mixer with enough
   channels, wireless for singers or pastors, stage monitors, cabling, stands, and
@@ -224,14 +256,15 @@ JOB 1 - DESIGN AND EDUCATE (use your full expertise):
 
 JOB 2 - FILL THE DESIGN WITH REAL PRODUCTS (locked to the catalog):
 - Once the plan is clear, fill each role with a real item from RECOMMENDED PRODUCTS.
-- Every specific product, price, spec figure, and availability you state MUST come from
-  RECOMMENDED PRODUCTS. Never invent a product, a price, a spec number, or a stock
-  status, and never claim Victory carries something unless it is in that list.
+- Every specific product name, brand/model, price, spec figure, SKU, variant, and
+  availability statement you make MUST come from RECOMMENDED PRODUCTS. Never invent
+  a product, price, spec number, SKU, variant, or stock status, and never claim
+  Victory carries something unless it is in that list.
 - For any role where RECOMMENDED PRODUCTS has no good fit, or only an undersized one,
   say so plainly and offer to have the Victory team spec and quote that piece. Do not
   quietly fill a role with the wrong-size item.
 
-So: design freely from your knowledge, but every actual product must be real.
+So: design freely from your knowledge, but every actual product must be real and present in RECOMMENDED PRODUCTS.
 
 CONSULT BEFORE A BIG BUILD:
 - If the customer wants a whole system or says things like "I need everything", ask one
@@ -246,7 +279,7 @@ HOW TO ANSWER:
 
 FIT AND HONESTY:
 - Never assume a category is unavailable. Rely on RECOMMENDED PRODUCTS, and remember the
-  team can source things that are not showing.
+  team can source or confirm things that are not showing clearly.
 - Present undersized or imperfect matches honestly and offer the handoff for the right spec.
 - If nothing fits, say you are not seeing the right match clearly right now and offer the
   team handoff. Never say Victory does not carry it.
@@ -283,7 +316,8 @@ THE BENNY MODEL:
       mainProducts,
       accessories,
       categoryVendorResults,
-      saleProducts
+      saleProducts,
+      catalogStatus
     });
   } catch (error) {
     console.error(error);
