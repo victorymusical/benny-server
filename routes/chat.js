@@ -2,7 +2,7 @@ import express from "express";
 import client from "../services/openai.js";
 import fs from "fs";
 import path from "path";
-import { searchShopifyProducts } from "../services/shopify.js";
+import { searchShopifyProducts, getCollectionProducts } from "../services/shopify.js";
 import { getVendorsForCategory } from "../services/vendors.js";
 import { classifyIntentWithAI } from "../services/intentAI.js";
 import { buildTaxonomySearchQueries } from "../services/taxonomy.js";
@@ -26,41 +26,77 @@ function loadKnowledgeFile(filename) {
   }
 }
 
-function loadKnowledgeBase() {
-  const knowledgeFiles = [
-    "sales-methodology.md",
-    "conversational-rules.md",
-    "category-governance.md",
-    "greeting-rules.md",
-    "retrieval-safety-rules.md",
-    "financing-rules.md",
-    "financing-and-sales.md",
-    "saxophones.md",
-    "reed-instruments.md",
-    "flutes-piccolos.md",
-    "high-brass.md",
-    "low-brass.md",
-    "trombones.md",
-    "guitars.md",
-    "bass-guitars.md",
-    "keys-and-synths.md",
-    "drums.md",
-    "percussion.md",
-    "orchestral-strings.md",
-    "band-and-orchestra-programs.md",
-    "audio-interfaces.md",
-    "microphones.md",
-    "headphones-and-monitoring.md",
-    "studio-workflows.md",
-    "video-production.md",
-    "broadcast-production.md",
-    "live-sound.md",
-    "network-solutions.md",
-    "house-of-worship.md",
-    "cables.md"
-  ];
+// Always-on rules. Small and cheap. These set tone, policy, and safety.
+const CORE_KNOWLEDGE = [
+  "sales-methodology.md",
+  "conversational-rules.md",
+  "category-governance.md",
+  "greeting-rules.md",
+  "retrieval-safety-rules.md"
+];
 
-  return knowledgeFiles
+// Topic-specific docs. Loaded ONLY when the conversation is about that topic, so
+// the right expertise drives the answer instead of being buried under everything.
+const KNOWLEDGE_MAP = [
+  { keywords: ["sax", "saxophone", "alto", "tenor", "soprano"], files: ["saxophones.md", "reed-instruments.md"] },
+  { keywords: ["clarinet", "oboe", "bassoon", "reed"], files: ["reed-instruments.md"] },
+  { keywords: ["flute", "piccolo"], files: ["flutes-piccolos.md"] },
+  { keywords: ["trumpet", "cornet", "flugel"], files: ["high-brass.md"] },
+  { keywords: ["trombone"], files: ["trombones.md", "low-brass.md"] },
+  { keywords: ["euphonium", "baritone horn", "tuba", "sousaphone", "french horn"], files: ["low-brass.md"] },
+  { keywords: ["bass guitar", "electric bass", "bassist"], files: ["bass-guitars.md"] },
+  { keywords: ["guitar"], files: ["guitars.md"] },
+  { keywords: ["keyboard", "piano", "synth", "workstation"], files: ["keys-and-synths.md"] },
+  { keywords: ["drum"], files: ["drums.md"] },
+  { keywords: ["percussion", "cymbal", "conga", "timbale", "marimba"], files: ["percussion.md"] },
+  { keywords: ["violin", "viola", "cello", "orchestral string"], files: ["orchestral-strings.md"] },
+  { keywords: ["microphone", " mic ", "wireless"], files: ["microphones.md"] },
+  { keywords: ["interface", "apollo", "volt", "preamp"], files: ["audio-interfaces.md", "studio-workflows.md"] },
+  { keywords: ["headphone", "studio monitor", "monitoring"], files: ["headphones-and-monitoring.md"] },
+  { keywords: ["reverb", "effects", "bricasti", "outboard"], files: ["studio-workflows.md"] },
+  { keywords: ["speaker", "pa system", "loudspeaker", "line array", "power amp", "amplifier", "mixer", "mixing", "live sound", "subwoofer", "wedge"], files: ["live-sound.md"] },
+  { keywords: ["church", "worship", "sanctuary", "congregation", "house of worship"], files: ["house-of-worship.md", "live-sound.md"] },
+  { keywords: ["stream", "ptz", "camera", "switcher", "atem", "broadcast", "video"], files: ["video-production.md", "broadcast-production.md"] },
+  { keywords: ["dante", "network", "aes67", "avb"], files: ["network-solutions.md"] },
+  { keywords: ["cable", "xlr", "trs", "hosa", "monster", "snake"], files: ["cables.md"] },
+  { keywords: ["school", "band program", "orchestra program", "educator", "marching"], files: ["band-and-orchestra-programs.md"] }
+];
+
+const FINANCING_FILES = ["financing-rules.md", "financing-and-sales.md"];
+
+function selectKnowledgeFiles(messages, intentData) {
+  const conversationText = messages
+    .filter(m => m.role === "user")
+    .map(m => String(m.content || ""))
+    .join(" ")
+    .toLowerCase();
+
+  const intentText = JSON.stringify(intentData || {}).toLowerCase();
+  const haystack = ` ${conversationText} ${intentText} `;
+
+  const files = new Set(CORE_KNOWLEDGE);
+
+  for (const entry of KNOWLEDGE_MAP) {
+    if (entry.keywords.some(k => haystack.includes(k))) {
+      entry.files.forEach(f => files.add(f));
+    }
+  }
+
+  const wantsFinancing =
+    intentData?.needsFinancing ||
+    intentData?.needsQuote ||
+    intentData?.needsPrice ||
+    ["financ", "payment", "monthly", "lease", "afterpay", "installment"].some(k =>
+      haystack.includes(k)
+    );
+
+  if (wantsFinancing) FINANCING_FILES.forEach(f => files.add(f));
+
+  return [...files];
+}
+
+function loadKnowledgeBase(messages, intentData) {
+  return selectKnowledgeFiles(messages, intentData)
     .map(file => {
       const content = loadKnowledgeFile(file);
       return content ? `\n\n===== ${file} =====\n\n${content}` : "";
@@ -73,18 +109,30 @@ async function getProductsForIntent(intentData) {
   const taxonomyQueries = buildTaxonomySearchQueries(intentData);
 
   for (const queryGroup of taxonomyQueries) {
-    const uniqueQueries = [
+    const combinedProducts = [];
+
+    // 1. If we know the real collection, pull from it first. This is the
+    //    authoritative source for a category browse (e.g. real PA speakers),
+    //    so we never substitute a desk monitor for a sanctuary speaker.
+    if (queryGroup.collectionHandle) {
+      const collectionProducts = await getCollectionProducts(queryGroup.collectionHandle, 30);
+      combinedProducts.push(...collectionProducts);
+    }
+
+    // 2. Always also run the most specific text query, so a named brand or model
+    //    surfaces even if it is not in the first page of the collection, and so
+    //    categories without a collection still return results.
+    const textQueries = [
       ...new Set(
         (queryGroup.searchQueries || [])
           .filter(Boolean)
-          .map(query => String(query).trim())
+          .map(q => String(q).trim())
           .filter(Boolean)
       )
     ];
 
-    const combinedProducts = [];
-
-    for (const query of uniqueQueries.slice(0, 4)) {
+    const queryBudget = queryGroup.collectionHandle ? 2 : 3;
+    for (const query of textQueries.slice(0, queryBudget)) {
       const products = await searchShopifyProducts(query, 10);
       combinedProducts.push(...products);
     }
@@ -97,7 +145,6 @@ async function getProductsForIntent(intentData) {
       requestedItem: queryGroup.requestedItem,
       taxonomyCategory: queryGroup.taxonomyCategory,
       collectionHandle: queryGroup.collectionHandle,
-      searchQueriesUsed: uniqueQueries.slice(0, 4),
       products: dedupedProducts
     });
   }
@@ -109,9 +156,8 @@ router.post("/", async (req, res) => {
   try {
     const { messages = [] } = req.body;
 
-    const knowledgeBase = loadKnowledgeBase();
-
     const intentData = await classifyIntentWithAI(messages);
+    const knowledgeBase = loadKnowledgeBase(messages, intentData);
 
     const rawProductGroups = await getProductsForIntent(intentData);
     const validatedProductGroups = validateProductGroups(rawProductGroups);
@@ -120,8 +166,6 @@ router.post("/", async (req, res) => {
     const mainProducts = getMainProducts(validatedProductGroups);
     const accessories = getAccessories(validatedProductGroups);
 
-    // ONE clean, ranked list. This is what Benny recommends from and what the
-    // product cards on the page will render.
     const recommendedProducts = buildRecommendedProducts(validatedProductGroups, 8);
 
     const categories = [
@@ -156,55 +200,73 @@ ${knowledgeBase}
 WHAT THE CUSTOMER IS ASKING FOR (parsed intent):
 ${JSON.stringify(intentData, null, 2)}
 
-RECOMMENDED PRODUCTS (already ranked best-first from a live store search. Recommend from THIS list):
+RECOMMENDED PRODUCTS (already ranked best-first from live store collections and search. Recommend from THIS list):
 ${JSON.stringify(recommendedProducts, null, 2)}
 
 BRANDS FOUND BY CATEGORY (use only to answer "what brands do you carry" style questions):
 ${JSON.stringify(categoryVendorResults, null, 2)}
 
+YOUR TWO JOBS (read this carefully):
+You have two different jobs, and they follow different rules.
+
+JOB 1 - DESIGN AND EDUCATE (use your full expertise):
+- Use everything you know about music gear, audio, and system design, together with
+  the knowledge above, to work out what the customer actually needs. Think like a
+  systems engineer here.
+- For a room or venue, reason about the whole signal chain and the roles that must be
+  filled: main speakers sized to the room, a subwoofer if needed, a mixer with enough
+  channels, wireless for singers or pastors, stage monitors, cabling, stands, and
+  power. Explain the plan in plain language.
+- Describe these needs by ROLE and CAPABILITY, for example "a digital mixer with at
+  least 16 channels" or "mains that can cover a 200-seat room". You may share general
+  rules of thumb. Do NOT name specific commercial brands or models in this design part,
+  because that can imply we stock them.
+
+JOB 2 - FILL THE DESIGN WITH REAL PRODUCTS (locked to the catalog):
+- Once the plan is clear, fill each role with a real item from RECOMMENDED PRODUCTS.
+- Every specific product, price, spec figure, and availability you state MUST come from
+  RECOMMENDED PRODUCTS. Never invent a product, a price, a spec number, or a stock
+  status, and never claim Victory carries something unless it is in that list.
+- For any role where RECOMMENDED PRODUCTS has no good fit, or only an undersized one,
+  say so plainly and offer to have the Victory team spec and quote that piece. Do not
+  quietly fill a role with the wrong-size item.
+
+So: design freely from your knowledge, but every actual product must be real.
+
+CONSULT BEFORE A BIG BUILD:
+- If the customer wants a whole system or says things like "I need everything", ask one
+  to three short scoping questions first, one at a time: how many seats or people, room
+  size, whether they also live stream, and rough budget. Then design to that scale.
+
 HOW TO ANSWER:
-- Be concise, warm, and consultative. You are a guide, not a pushy salesperson.
-- Ask only one useful question at a time. Remember earlier answers in the conversation.
-- Recommend the best fits from RECOMMENDED PRODUCTS, best first.
-- The list is already ranked and de-duplicated. Items lower in the list with a
-  matchLabel of "accessory" are add-ons, not the main item, unless the customer
-  asked for an accessory.
-- Never invent product names, brands, prices, specs, discounts, or inventory.
+- Be concise, warm, and consultative. A guide, not a pushy salesperson.
+- Ask only one question at a time, and remember earlier answers.
+- Lead with the design or the direct answer, then fill with products.
+- Items with matchLabel "accessory" are add-ons, not the main item, unless asked for.
 
-HOW TO SHOW PRODUCTS (important, the page draws the cards for you):
-- Do NOT paste any URLs, links, or "Add to cart:" text in your reply. The page
-  automatically renders a product card with the image, price, sale badge, and a
-  working Add to Cart button.
-- When you recommend a product, write one short sentence about it, then place a
-  marker on its OWN line directly after, in this exact format:
-  [[PRODUCT:handle]]
-  where "handle" is copied exactly from the "handle" field of that product in
-  RECOMMENDED PRODUCTS. Example: [[PRODUCT:esi-unik-05-plus]]
-- Use one marker per product, only for products that appear in RECOMMENDED
-  PRODUCTS. Refer to the product by name in your sentence. Do not write the price
-  yourself; the card shows it.
-- Do not mention sale pricing in words; if a product is on sale the card shows the
-  badge and original price automatically.
+FIT AND HONESTY:
+- Never assume a category is unavailable. Rely on RECOMMENDED PRODUCTS, and remember the
+  team can source things that are not showing.
+- Present undersized or imperfect matches honestly and offer the handoff for the right spec.
+- If nothing fits, say you are not seeing the right match clearly right now and offer the
+  team handoff. Never say Victory does not carry it.
 
-AVAILABILITY RULES (very important, this prevents wrong answers):
-- NEVER say or imply that Victory does not carry a brand, product, or category.
-- A short or empty search result does NOT mean the item is unavailable. It only
-  means you are not seeing it clearly right now.
-- If RECOMMENDED PRODUCTS is empty or nothing fits, say something like: "I'm not
-  seeing that clearly in my current search, so I don't want to give you wrong
-  info. We very likely can still help. The team can confirm availability and
-  options for you." Then offer the human handoff. Do not guess that it is unavailable.
-- Only discuss brands as carried/not carried based on real product or vendor data,
-  never from memory or assumption.
+HOW TO SHOW PRODUCTS (the page draws the cards for you):
+- Do NOT paste URLs, links, or "Add to cart:" text. The page renders a product card with
+  image, price, sale badge, and Add to Cart button automatically.
+- When you recommend a real product, write one short sentence about it, then place a
+  marker on its OWN line right after, exactly: [[PRODUCT:handle]] using the product's
+  "handle" from RECOMMENDED PRODUCTS. Example: [[PRODUCT:jbl-3-way-powered-loudspeaker]]
+- One marker per product, only for products in RECOMMENDED PRODUCTS. Name the product in
+  your sentence; do not write the price yourself.
 
-THE BENNY MODEL (how you help):
-- Help the customer explore, learn, compare, and build a cart or a full system.
-- You can build out a multi-item cart or quote when asked, and summarize the items
-  clearly. Do not claim a real order has been placed.
-- When the customer is ready, invite them to confirm final availability, pricing,
-  and details with a Victory team member during business hours. Frame this as the
-  natural next step, not as you being unable to help.
-- Do not overpromise. It is fine to say the team can finalize things you cannot.
+THE BENNY MODEL:
+- Help the customer explore, learn, design, compare, and build a cart or full system.
+- You can assemble a multi-item cart or quote and summarize it, but never claim a real
+  order has been placed.
+- When they are ready, invite them to confirm final availability, pricing, and details
+  with a Victory team member during business hours. Frame it as the natural next step,
+  not as you being unable to help. Do not overpromise.
 `
         },
         ...messages
