@@ -160,8 +160,8 @@ export const TAXONOMY = {
   "Microphones": {
     canonicalCategory: "Microphones",
     collectionHandle: "microphones",
-    aliases: ["microphone", "microphones", "mic", "mics", "condenser microphone", "dynamic microphone", "studio mic", "vocal mic", "wireless mic", "wireless microphone"],
-    productTypeHints: ["microphone", "condenser microphone", "dynamic microphone", "wireless microphone"],
+    aliases: ["microphone", "microphones", "mic", "mics", "condenser microphone", "dynamic microphone", "studio mic", "vocal mic", "instrument mic"],
+    productTypeHints: ["microphone", "condenser microphone", "dynamic microphone"],
     excludeAccessoryTerms: ["stand", "cable", "clip", "shock mount", "pop filter", "case", "adapter", "windscreen"]
   },
   "Audio Interfaces": {
@@ -192,19 +192,33 @@ export const TAXONOMY = {
     productTypeHints: ["reverb", "effects processor", "processor"],
     excludeAccessoryTerms: ["cable", "adapter", "rack", "power supply"]
   },
+  "Speakers and PA": {
+    canonicalCategory: "Speakers and PA",
+    collectionHandle: "speakers",
+    aliases: ["speaker", "speakers", "pa speaker", "pa system", "powered speaker", "active speaker", "passive speaker", "loudspeaker", "line array", "subwoofer", "stage monitor", "front of house", "sound system", "church speakers"],
+    productTypeHints: ["speaker", "loudspeaker", "line array", "subwoofer"],
+    excludeAccessoryTerms: ["cable", "stand", "case", "bag", "cover", "adapter"]
+  },
+  "Power Amplifiers": {
+    canonicalCategory: "Power Amplifiers",
+    collectionHandle: "power-amplifiers",
+    aliases: ["power amplifier", "power amp", "amplifier", "amp rack", "multichannel amplifier"],
+    productTypeHints: ["power amplifier", "amplifier"],
+    excludeAccessoryTerms: ["cable", "rack", "case", "adapter"]
+  },
+  "Wireless Systems": {
+    canonicalCategory: "Wireless Systems",
+    collectionHandle: "wireless-systems",
+    aliases: ["wireless system", "wireless systems", "wireless microphone", "wireless mic", "wireless microphone system", "lavalier", "lapel mic", "handheld wireless", "bodypack", "wireless receiver"],
+    productTypeHints: ["wireless system", "wireless microphone"],
+    excludeAccessoryTerms: ["cable", "case", "battery", "antenna", "adapter"]
+  },
   "Mixers": {
     canonicalCategory: "Mixers",
-    collectionHandle: "mixers",
-    aliases: ["mixer", "mixers", "mixing console", "analog mixer", "digital mixer", "powered mixer"],
+    collectionHandle: null,
+    aliases: ["mixer", "mixers", "mixing console", "analog mixer", "digital mixer", "powered mixer", "mixing desk", "mic line mixer"],
     productTypeHints: ["mixer", "mixing console"],
-    excludeAccessoryTerms: ["cable", "case", "bag", "power supply", "adapter"]
-  },
-  "PA and Live Sound": {
-    canonicalCategory: "PA and Live Sound",
-    collectionHandle: "live-sound",
-    aliases: ["pa speaker", "pa system", "powered speaker", "active speaker", "subwoofer", "stage monitor", "loudspeaker"],
-    productTypeHints: ["pa speaker", "powered speaker", "loudspeaker", "subwoofer"],
-    excludeAccessoryTerms: ["cable", "stand", "case", "bag", "cover", "adapter"]
+    excludeAccessoryTerms: ["cable", "case", "bag", "power supply", "adapter", "rack"]
   },
 
   // ---------- VIDEO ----------
@@ -234,7 +248,7 @@ export const TAXONOMY = {
   },
   "Stands and Mounts": {
     canonicalCategory: "Stands and Mounts",
-    collectionHandle: "stands-mounts",
+    collectionHandle: "on-stage",
     isAccessoryCategory: true,
     aliases: ["stand", "stands", "mic stand", "music stand", "speaker stand", "keyboard stand", "guitar stand", "mount", "mounts", "wall mount"],
     productTypeHints: ["stand", "mount"],
