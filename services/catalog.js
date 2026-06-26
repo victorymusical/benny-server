@@ -81,18 +81,22 @@ const CATALOG_QUERY = `
           vendor
           productType
           tags
+          description
           availableForSale
           onlineStoreUrl
-          featuredImage { url }
+          featuredImage { url altText }
           priceRange { minVariantPrice { amount currencyCode } }
           compareAtPriceRange { minVariantPrice { amount currencyCode } }
-          collections(first: 10) { edges { node { handle title } } }
-          variants(first: 1) {
+          collections(first: 50) { edges { node { handle title } } }
+          options { name values }
+          variants(first: 100) {
             edges {
               node {
                 id
+                title
                 sku
                 availableForSale
+                selectedOptions { name value }
                 price { amount currencyCode }
                 compareAtPrice { amount currencyCode }
               }
@@ -110,8 +114,37 @@ function mapNode(node) {
   const priceAmount = toNumber(minPrice?.amount);
   const compareAtPriceAmount = toNumber(compareMin?.amount);
 
-  const variant = node.variants?.edges?.[0]?.node || null;
-  const numericVariantId = variant ? extractNumericId(variant.id) : null;
+  const variants = (node.variants?.edges || []).map(edge => {
+    const variant = edge.node;
+    const numericVariantId = extractNumericId(variant.id);
+    const variantPriceAmount = toNumber(variant.price?.amount);
+    const variantCompareAtAmount = toNumber(variant.compareAtPrice?.amount);
+
+    const variantIsOnSale =
+      variantCompareAtAmount !== null &&
+      variantPriceAmount !== null &&
+      variantCompareAtAmount > variantPriceAmount;
+
+    return {
+      id: variant.id,
+      numericVariantId,
+      title: variant.title || "Default Title",
+      sku: variant.sku || null,
+      availableForSale: variant.availableForSale,
+      selectedOptions: variant.selectedOptions || [],
+      price: variant.price ? `${variant.price.currencyCode} ${variant.price.amount}` : null,
+      priceAmount: variantPriceAmount,
+      compareAtPrice: variant.compareAtPrice
+        ? `${variant.compareAtPrice.currencyCode} ${variant.compareAtPrice.amount}`
+        : null,
+      compareAtPriceAmount: variantCompareAtAmount,
+      isOnSale: variantIsOnSale,
+      addToCartUrl: buildCartUrl(numericVariantId, 1)
+    };
+  });
+
+  const primaryVariant =
+    variants.find(variant => variant.availableForSale) || variants[0] || null;
 
   const collections = (node.collections?.edges || []).map(e => e.node.handle);
   const collectionTitles = (node.collections?.edges || []).map(e => e.node.title);
@@ -127,11 +160,14 @@ function mapNode(node) {
     title: node.title,
     vendor: node.vendor || "",
     productType: node.productType || "",
+    description: node.description || "",
     tags: node.tags || [],
     collections,
     collectionTitles,
+    options: node.options || [],
     url: node.onlineStoreUrl || `https://${SHOPIFY_PUBLIC_DOMAIN}/products/${node.handle}`,
     image: node.featuredImage?.url || null,
+    imageAltText: node.featuredImage?.altText || null,
     price: minPrice ? `${minPrice.currencyCode} ${minPrice.amount}` : null,
     priceAmount,
     currencyCode: minPrice?.currencyCode || null,
@@ -139,8 +175,11 @@ function mapNode(node) {
     compareAtPriceAmount,
     isOnSale,
     available: node.availableForSale,
-    sku: variant?.sku || null,
-    addToCartUrl: buildCartUrl(numericVariantId, 1)
+    primaryVariant,
+    variants,
+    variantCount: variants.length,
+    sku: primaryVariant?.sku || null,
+    addToCartUrl: primaryVariant?.addToCartUrl || null
   };
 }
 
@@ -233,9 +272,11 @@ export function summarizeCatalog(list = catalog) {
   const withType = count(p => p.productType && p.productType.trim());
   const withTags = count(p => (p.tags || []).length > 0);
   const withImage = count(p => p.image);
+  const withDescription = count(p => p.description && p.description.trim());
   const withCollections = count(p => (p.collections || []).length > 0);
   const onSale = count(p => p.isOnSale);
   const available = count(p => p.available);
+  const variantTotal = list.reduce((sum, p) => sum + ((p.variants || []).length || 0), 0);
 
   const tally = key => {
     const map = new Map();
@@ -269,10 +310,12 @@ export function summarizeCatalog(list = catalog) {
       productType: { count: withType, pct: pct(withType) },
       tags: { count: withTags, pct: pct(withTags) },
       image: { count: withImage, pct: pct(withImage) },
+      description: { count: withDescription, pct: pct(withDescription) },
       collections: { count: withCollections, pct: pct(withCollections) },
       available: { count: available, pct: pct(available) },
       onSale: { count: onSale, pct: pct(onSale) }
     },
+    skus: { totalVariantRecords: variantTotal },
     vendors: { distinct: vendors.length, top: vendors.slice(0, 25) },
     productTypes: { distinct: types.length, top: types.slice(0, 40) },
     collections: { distinct: collections.length, top: collections.slice(0, 40) },
