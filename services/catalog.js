@@ -1,22 +1,30 @@
 // catalog.js
 //
-// Benny's own copy of your catalog. Instead of guessing with a live search on
-// every question, Benny reads every product on your site once, stores it here,
-// and refreshes on a schedule. Lookups then become facts, not guesses.
+// Benny's own copy of your catalog.
 //
-// This module does three things:
-//   1. syncCatalog()   - pull every product from Shopify into a local index
-//   2. summarizeCatalog() - report the true shape of the catalog (the one-pager)
-//   3. simple query helpers Benny will use (by handle, by vendor, all products)
-//
-// It uses the SAME Storefront token Benny already uses. No new accounts.
+// IMPORTANT CHANGE:
+// - If SHOPIFY_ADMIN_ACCESS_TOKEN is set, syncCatalog() now uses the Shopify Admin
+//   GraphQL API as the source of truth. This sees the real Shopify catalog better
+//   than the Storefront API, which can miss products not exposed to that channel.
+// - If SHOPIFY_ADMIN_ACCESS_TOKEN is not set, it falls back to the Storefront API
+//   so the app does not break while you are setting up the Admin token.
 
 import fs from "fs";
 import path from "path";
 
 const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN;
 const SHOPIFY_STOREFRONT_ACCESS_TOKEN = process.env.SHOPIFY_STOREFRONT_ACCESS_TOKEN;
+
+// Use the myshopify.com domain here when possible, for example:
+// victory-musical.myshopify.com
+const SHOPIFY_ADMIN_STORE_DOMAIN =
+  process.env.SHOPIFY_ADMIN_STORE_DOMAIN || SHOPIFY_STORE_DOMAIN;
+const SHOPIFY_ADMIN_ACCESS_TOKEN = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+const SHOPIFY_ADMIN_API_VERSION = process.env.SHOPIFY_ADMIN_API_VERSION || "2026-04";
+
+// Customer-facing domain for product links and add-to-cart links.
 const SHOPIFY_PUBLIC_DOMAIN = process.env.SHOPIFY_PUBLIC_DOMAIN || SHOPIFY_STORE_DOMAIN;
+const SHOPIFY_CURRENCY_CODE = process.env.SHOPIFY_CURRENCY_CODE || "USD";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const CATALOG_PATH = path.join(DATA_DIR, "catalog.json");
@@ -27,6 +35,7 @@ let byHandle = new Map();
 let lastSync = null;
 let lastSummary = null;
 let isSyncing = false;
+let lastSyncSource = null;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -42,17 +51,34 @@ function extractNumericId(gid) {
   return String(gid).split("/").pop();
 }
 
-function buildCartUrl(numericVariantId, quantity = 1) {
-  if (!numericVariantId) return null;
-  return `https://${SHOPIFY_PUBLIC_DOMAIN}/cart/${numericVariantId}:${quantity}`;
+function cleanDomain(domain) {
+  return String(domain || "")
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/.*$/, "")
+    .trim();
 }
 
-async function shopifyGraphQL(query, variables) {
+function buildCartUrl(numericVariantId, quantity = 1) {
+  if (!numericVariantId) return null;
+  return `https://${cleanDomain(SHOPIFY_PUBLIC_DOMAIN)}/cart/${numericVariantId}:${quantity}`;
+}
+
+function formatMoneyFromV2(money) {
+  if (!money) return null;
+  return `${money.currencyCode || SHOPIFY_CURRENCY_CODE} ${money.amount}`;
+}
+
+function formatMoneyScalar(value, currencyCode = SHOPIFY_CURRENCY_CODE) {
+  if (value === null || value === undefined || value === "") return null;
+  return `${currencyCode} ${value}`;
+}
+
+async function shopifyStorefrontGraphQL(query, variables) {
   if (!SHOPIFY_STORE_DOMAIN || !SHOPIFY_STOREFRONT_ACCESS_TOKEN) {
-    throw new Error("Missing Shopify environment variables.");
+    throw new Error("Missing Shopify Storefront environment variables.");
   }
 
-  const endpoint = `https://${SHOPIFY_STORE_DOMAIN}/api/2025-10/graphql.json`;
+  const endpoint = `https://${cleanDomain(SHOPIFY_STORE_DOMAIN)}/api/2025-10/graphql.json`;
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
@@ -64,13 +90,35 @@ async function shopifyGraphQL(query, variables) {
 
   const data = await response.json();
   if (data.errors) {
-    throw new Error("Shopify error: " + JSON.stringify(data.errors).slice(0, 300));
+    throw new Error("Shopify Storefront error: " + JSON.stringify(data.errors).slice(0, 500));
   }
   return data.data;
 }
 
-const CATALOG_QUERY = `
-  query Catalog($cursor: String) {
+async function shopifyAdminGraphQL(query, variables) {
+  if (!SHOPIFY_ADMIN_STORE_DOMAIN || !SHOPIFY_ADMIN_ACCESS_TOKEN) {
+    throw new Error("Missing SHOPIFY_ADMIN_STORE_DOMAIN or SHOPIFY_ADMIN_ACCESS_TOKEN.");
+  }
+
+  const endpoint = `https://${cleanDomain(SHOPIFY_ADMIN_STORE_DOMAIN)}/admin/api/${SHOPIFY_ADMIN_API_VERSION}/graphql.json`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": SHOPIFY_ADMIN_ACCESS_TOKEN
+    },
+    body: JSON.stringify({ query, variables })
+  });
+
+  const data = await response.json();
+  if (data.errors) {
+    throw new Error("Shopify Admin error: " + JSON.stringify(data.errors).slice(0, 800));
+  }
+  return data.data;
+}
+
+const STOREFRONT_CATALOG_QUERY = `
+  query StorefrontCatalog($cursor: String) {
     products(first: 250, after: $cursor) {
       pageInfo { hasNextPage endCursor }
       edges {
@@ -108,7 +156,60 @@ const CATALOG_QUERY = `
   }
 `;
 
-function mapNode(node) {
+const ADMIN_CATALOG_QUERY = `
+  query AdminCatalog($cursor: String, $productQuery: String!) {
+    products(first: 250, after: $cursor, query: $productQuery) {
+      pageInfo { hasNextPage endCursor }
+      edges {
+        node {
+          id
+          legacyResourceId
+          title
+          handle
+          vendor
+          productType
+          tags
+          description
+          status
+          totalInventory
+          tracksInventory
+          onlineStoreUrl
+          featuredMedia {
+            ... on MediaImage {
+              image { url altText }
+            }
+          }
+          priceRangeV2 {
+            minVariantPrice { amount currencyCode }
+          }
+          compareAtPriceRange {
+            minVariantCompareAtPrice { amount currencyCode }
+          }
+          collections(first: 50) { edges { node { handle title } } }
+          options { name values }
+          variants(first: 250) {
+            edges {
+              node {
+                id
+                legacyResourceId
+                title
+                sku
+                availableForSale
+                inventoryQuantity
+                sellableOnlineQuantity
+                selectedOptions { name value }
+                price
+                compareAtPrice
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+function mapStorefrontNode(node) {
   const minPrice = node.priceRange?.minVariantPrice || null;
   const compareMin = node.compareAtPriceRange?.minVariantPrice || null;
   const priceAmount = toNumber(minPrice?.amount);
@@ -143,9 +244,7 @@ function mapNode(node) {
     };
   });
 
-  const primaryVariant =
-    variants.find(variant => variant.availableForSale) || variants[0] || null;
-
+  const primaryVariant = variants.find(variant => variant.availableForSale) || variants[0] || null;
   const collections = (node.collections?.edges || []).map(e => e.node.handle);
   const collectionTitles = (node.collections?.edges || []).map(e => e.node.title);
 
@@ -156,22 +255,24 @@ function mapNode(node) {
 
   return {
     id: node.id,
+    numericProductId: extractNumericId(node.id),
     handle: node.handle,
     title: node.title,
     vendor: node.vendor || "",
     productType: node.productType || "",
     description: node.description || "",
+    status: "ACTIVE",
     tags: node.tags || [],
     collections,
     collectionTitles,
     options: node.options || [],
-    url: node.onlineStoreUrl || `https://${SHOPIFY_PUBLIC_DOMAIN}/products/${node.handle}`,
+    url: node.onlineStoreUrl || `https://${cleanDomain(SHOPIFY_PUBLIC_DOMAIN)}/products/${node.handle}`,
     image: node.featuredImage?.url || null,
     imageAltText: node.featuredImage?.altText || null,
-    price: minPrice ? `${minPrice.currencyCode} ${minPrice.amount}` : null,
+    price: formatMoneyFromV2(minPrice),
     priceAmount,
-    currencyCode: minPrice?.currencyCode || null,
-    compareAtPrice: compareMin ? `${compareMin.currencyCode} ${compareMin.amount}` : null,
+    currencyCode: minPrice?.currencyCode || SHOPIFY_CURRENCY_CODE,
+    compareAtPrice: formatMoneyFromV2(compareMin),
     compareAtPriceAmount,
     isOnSale,
     available: node.availableForSale,
@@ -179,8 +280,158 @@ function mapNode(node) {
     variants,
     variantCount: variants.length,
     sku: primaryVariant?.sku || null,
-    addToCartUrl: primaryVariant?.addToCartUrl || null
+    addToCartUrl: primaryVariant?.addToCartUrl || null,
+    syncSource: "storefront_api"
   };
+}
+
+function mapAdminNode(node) {
+  const minPrice = node.priceRangeV2?.minVariantPrice || null;
+  const compareMin = node.compareAtPriceRange?.minVariantCompareAtPrice || null;
+  const priceAmount = toNumber(minPrice?.amount);
+  const compareAtPriceAmount = toNumber(compareMin?.amount);
+  const currencyCode = minPrice?.currencyCode || SHOPIFY_CURRENCY_CODE;
+
+  const variants = (node.variants?.edges || []).map(edge => {
+    const variant = edge.node;
+    const numericVariantId = extractNumericId(variant.legacyResourceId || variant.id);
+    const variantPriceAmount = toNumber(variant.price);
+    const variantCompareAtAmount = toNumber(variant.compareAtPrice);
+
+    const variantIsOnSale =
+      variantCompareAtAmount !== null &&
+      variantPriceAmount !== null &&
+      variantCompareAtAmount > variantPriceAmount;
+
+    return {
+      id: variant.id,
+      numericVariantId,
+      title: variant.title || "Default Title",
+      sku: variant.sku || null,
+      availableForSale: Boolean(variant.availableForSale),
+      inventoryQuantity: variant.inventoryQuantity ?? null,
+      sellableOnlineQuantity: variant.sellableOnlineQuantity ?? null,
+      selectedOptions: variant.selectedOptions || [],
+      price: formatMoneyScalar(variant.price, currencyCode),
+      priceAmount: variantPriceAmount,
+      compareAtPrice: formatMoneyScalar(variant.compareAtPrice, currencyCode),
+      compareAtPriceAmount: variantCompareAtAmount,
+      isOnSale: variantIsOnSale,
+      addToCartUrl: buildCartUrl(numericVariantId, 1)
+    };
+  });
+
+  const primaryVariant = variants.find(variant => variant.availableForSale) || variants[0] || null;
+  const collections = (node.collections?.edges || []).map(e => e.node.handle);
+  const collectionTitles = (node.collections?.edges || []).map(e => e.node.title);
+
+  const isOnSale =
+    compareAtPriceAmount !== null &&
+    priceAmount !== null &&
+    compareAtPriceAmount > priceAmount;
+
+  return {
+    id: node.id,
+    numericProductId: extractNumericId(node.legacyResourceId || node.id),
+    handle: node.handle,
+    title: node.title,
+    vendor: node.vendor || "",
+    productType: node.productType || "",
+    description: node.description || "",
+    status: node.status || "",
+    totalInventory: node.totalInventory ?? null,
+    tracksInventory: node.tracksInventory ?? null,
+    tags: node.tags || [],
+    collections,
+    collectionTitles,
+    options: node.options || [],
+    url: node.onlineStoreUrl || `https://${cleanDomain(SHOPIFY_PUBLIC_DOMAIN)}/products/${node.handle}`,
+    image: node.featuredMedia?.image?.url || null,
+    imageAltText: node.featuredMedia?.image?.altText || null,
+    price: formatMoneyFromV2(minPrice),
+    priceAmount,
+    currencyCode,
+    compareAtPrice: formatMoneyFromV2(compareMin),
+    compareAtPriceAmount,
+    isOnSale,
+    available: variants.some(variant => variant.availableForSale),
+    primaryVariant,
+    variants,
+    variantCount: variants.length,
+    sku: primaryVariant?.sku || null,
+    addToCartUrl: primaryVariant?.addToCartUrl || null,
+    syncSource: "admin_api"
+  };
+}
+
+async function syncViaStorefront({ verbose }) {
+  const all = [];
+  let cursor = null;
+  let hasNext = true;
+  let page = 0;
+
+  while (hasNext) {
+    let data;
+    let attempt = 0;
+    while (true) {
+      try {
+        data = await shopifyStorefrontGraphQL(STOREFRONT_CATALOG_QUERY, { cursor });
+        break;
+      } catch (err) {
+        attempt += 1;
+        if (attempt > 4) throw err;
+        await sleep(1000 * attempt);
+      }
+    }
+
+    const conn = data.products;
+    for (const edge of conn.edges) all.push(mapStorefrontNode(edge.node));
+
+    hasNext = conn.pageInfo.hasNextPage;
+    cursor = conn.pageInfo.endCursor;
+    page += 1;
+    if (verbose) console.log(`Catalog sync Storefront API: page ${page}, ${all.length} products so far`);
+    await sleep(250);
+  }
+
+  return { products: all, source: "storefront_api" };
+}
+
+async function syncViaAdmin({ verbose }) {
+  const all = [];
+  let cursor = null;
+  let hasNext = true;
+  let page = 0;
+
+  // Pull ACTIVE products. This should line up much better with your Shopify export.
+  // If you ever want to include drafts/archived for analysis, change this query.
+  const productQuery = process.env.SHOPIFY_ADMIN_PRODUCT_QUERY || "status:active";
+
+  while (hasNext) {
+    let data;
+    let attempt = 0;
+    while (true) {
+      try {
+        data = await shopifyAdminGraphQL(ADMIN_CATALOG_QUERY, { cursor, productQuery });
+        break;
+      } catch (err) {
+        attempt += 1;
+        if (attempt > 4) throw err;
+        await sleep(1000 * attempt);
+      }
+    }
+
+    const conn = data.products;
+    for (const edge of conn.edges) all.push(mapAdminNode(edge.node));
+
+    hasNext = conn.pageInfo.hasNextPage;
+    cursor = conn.pageInfo.endCursor;
+    page += 1;
+    if (verbose) console.log(`Catalog sync Admin API: page ${page}, ${all.length} active products so far`);
+    await sleep(350);
+  }
+
+  return { products: all, source: "admin_api", productQuery };
 }
 
 // Pull every product from Shopify into the local index.
@@ -192,56 +443,33 @@ export async function syncCatalog({ verbose = true } = {}) {
   const startedAt = Date.now();
 
   try {
-    const all = [];
-    let cursor = null;
-    let hasNext = true;
-    let page = 0;
+    const result = SHOPIFY_ADMIN_ACCESS_TOKEN
+      ? await syncViaAdmin({ verbose })
+      : await syncViaStorefront({ verbose });
 
-    while (hasNext) {
-      let data;
-      let attempt = 0;
-      // Simple retry/backoff for throttling.
-      while (true) {
-        try {
-          data = await shopifyGraphQL(CATALOG_QUERY, { cursor });
-          break;
-        } catch (err) {
-          attempt += 1;
-          if (attempt > 4) throw err;
-          await sleep(1000 * attempt);
-        }
-      }
-
-      const conn = data.products;
-      for (const edge of conn.edges) all.push(mapNode(edge.node));
-
-      hasNext = conn.pageInfo.hasNextPage;
-      cursor = conn.pageInfo.endCursor;
-      page += 1;
-      if (verbose) console.log(`Catalog sync: page ${page}, ${all.length} products so far`);
-      await sleep(250); // be gentle on the API
-    }
+    const all = result.products;
 
     // Commit to memory + disk.
     catalog = all;
-    byHandle = new Map(all.map(p => [p.handle, p]));
+    byHandle = new Map(all.map(p => [String(p.handle || "").toLowerCase(), p]));
     lastSync = new Date().toISOString();
+    lastSyncSource = result.source;
     lastSummary = summarizeCatalog(all);
 
     try {
       if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
       fs.writeFileSync(
         CATALOG_PATH,
-        JSON.stringify({ lastSync, products: all }, null, 0)
+        JSON.stringify({ lastSync, lastSyncSource, products: all }, null, 0)
       );
     } catch (err) {
       console.warn("Could not persist catalog to disk:", err.message);
     }
 
     const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
-    if (verbose) console.log(`Catalog sync complete: ${all.length} products in ${seconds}s`);
+    if (verbose) console.log(`Catalog sync complete using ${result.source}: ${all.length} products in ${seconds}s`);
 
-    return { ok: true, count: all.length, seconds, lastSync, summary: lastSummary };
+    return { ok: true, source: result.source, productQuery: result.productQuery || null, count: all.length, seconds, lastSync, summary: lastSummary };
   } finally {
     isSyncing = false;
   }
@@ -253,10 +481,11 @@ export function loadCatalogFromDisk() {
     if (!fs.existsSync(CATALOG_PATH)) return false;
     const raw = JSON.parse(fs.readFileSync(CATALOG_PATH, "utf8"));
     catalog = raw.products || [];
-    byHandle = new Map(catalog.map(p => [p.handle, p]));
+    byHandle = new Map(catalog.map(p => [String(p.handle || "").toLowerCase(), p]));
     lastSync = raw.lastSync || null;
+    lastSyncSource = raw.lastSyncSource || catalog[0]?.syncSource || null;
     lastSummary = summarizeCatalog(catalog);
-    console.log(`Loaded ${catalog.length} products from saved catalog (synced ${lastSync}).`);
+    console.log(`Loaded ${catalog.length} products from saved catalog (synced ${lastSync}, source ${lastSyncSource || "unknown"}).`);
     return true;
   } catch (err) {
     console.warn("Could not load saved catalog:", err.message);
@@ -276,7 +505,9 @@ export function summarizeCatalog(list = catalog) {
   const withCollections = count(p => (p.collections || []).length > 0);
   const onSale = count(p => p.isOnSale);
   const available = count(p => p.available);
+  const active = count(p => !p.status || p.status === "ACTIVE");
   const variantTotal = list.reduce((sum, p) => sum + ((p.variants || []).length || 0), 0);
+  const skuTotal = list.reduce((sum, p) => sum + (p.variants || []).filter(v => v.sku).length, 0);
 
   const tally = key => {
     const map = new Map();
@@ -306,16 +537,18 @@ export function summarizeCatalog(list = catalog) {
 
   return {
     total,
+    source: lastSyncSource || list[0]?.syncSource || null,
     coverage: {
       productType: { count: withType, pct: pct(withType) },
       tags: { count: withTags, pct: pct(withTags) },
       image: { count: withImage, pct: pct(withImage) },
       description: { count: withDescription, pct: pct(withDescription) },
       collections: { count: withCollections, pct: pct(withCollections) },
+      active: { count: active, pct: pct(active) },
       available: { count: available, pct: pct(available) },
       onSale: { count: onSale, pct: pct(onSale) }
     },
-    skus: { totalVariantRecords: variantTotal },
+    skus: { totalVariantRecords: variantTotal, withSku: skuTotal },
     vendors: { distinct: vendors.length, top: vendors.slice(0, 25) },
     productTypes: { distinct: types.length, top: types.slice(0, 40) },
     collections: { distinct: collections.length, top: collections.slice(0, 40) },
@@ -330,11 +563,14 @@ export function getCatalogCount() {
 export function getLastSync() {
   return lastSync;
 }
+export function getLastSyncSource() {
+  return lastSyncSource;
+}
 export function getLastSummary() {
   return lastSummary || summarizeCatalog(catalog);
 }
 export function getByHandle(handle) {
-  return byHandle.get(String(handle || "").toLowerCase()) || byHandle.get(handle) || null;
+  return byHandle.get(String(handle || "").toLowerCase()) || null;
 }
 export function getAllProducts() {
   return catalog;
