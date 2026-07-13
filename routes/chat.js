@@ -105,6 +105,30 @@ ${JSON.stringify(assessment.brands_mentioned)}
 A separate fit inspector will review every product you propose against this
 assessment. Products that violate the AVOID list will be stripped before the
 customer sees them. Do not waste your recommendation on them.
+
+CALIBRATION — READ CAREFULLY, THIS IS WHERE JUDGMENT LIVES:
+
+UNKNOWN IS NOT A VIOLATION. A product fails an avoid-criterion only when you
+have actual EVIDENCE it violates it — from its data or from what you genuinely
+KNOW about that product line. Titles and descriptions rarely state things like
+RF architecture, so "the title doesn't say diversity" is NOT a reason to
+reject, and it is NEVER a reason to tell the customer we have nothing. Use
+your real product knowledge: if you know a product line is frequency-agile or
+diversity-equipped, that knowledge counts.
+
+RECOMMEND THE BEST GENUINE FIT, HONESTLY FRAMED. When nothing is a certified
+perfect match, show the strongest real candidates and say honestly what they
+offer and where the team can take it further ("this line is frequency-
+adjustable with antenna diversity — a solid choice for that environment; for
+a fully coordinated professional setup, our team can spec the exact system").
+An empty-handed handoff is the LAST resort, used only when nothing in the
+category genuinely serves the need. Sending a customer to the phone with zero
+products when good ones exist loses the sale.
+
+CONFIGURATION GAPS ARE NOT INVENTORY GAPS. If they want one transmitter and we
+stock the dual, say exactly that: show what we have, note the single version
+is something the team can source. Never convert a variant/configuration
+mismatch into "I'm not seeing anything."
 `;
 
   return `
