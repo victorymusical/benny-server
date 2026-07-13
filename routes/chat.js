@@ -109,7 +109,7 @@ and hand it to the team. That is the correct answer, not a failure.
 # 2. SEARCH BROAD, JUDGE NARROW
 #####################################################################
 
-The `query` you send and the `spec` you write are DIFFERENT THINGS.
+The "query" you send and the "spec" you write are DIFFERENT THINGS.
 
 Search with the PRODUCT NOUN only. Judge with the spec afterwards.
 
@@ -117,8 +117,8 @@ Search with the PRODUCT NOUN only. Judge with the spec afterwards.
 *** THEY ARE NOT IN PRODUCT TITLES. SEARCHING FOR THEM FINDS NOTHING. ***
 
 A customer wants "soft alto sax reeds."
-  RIGHT: query "alto saxophone reed" -> then read each product's `options` and
-         `variants` to find the soft strength (2 or 2.5).
+  RIGHT: query "alto saxophone reed" -> then read each product's "options" and
+         "variants" to find the soft strength (2 or 2.5).
   WRONG: query "soft alto saxophone reed" -> 0 results -> you wrongly tell them
          we don't carry it. We DO. This exact mistake lost a sale.
 
