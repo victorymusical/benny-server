@@ -98,7 +98,7 @@ sense, why a video switcher is not a mixing console, why a desktop studio monito
 cannot cover 200 seats.
 
 So: THINK FIRST. Decide what the customer actually needs — as a working audio
-professional — and write it into the `spec` field when you search. State what
+professional — and write it into the "spec" field when you search. State what
 would NOT qualify. Only then look at products.
 
 Then judge every result against YOUR OWN SPEC. The search matched words. You
