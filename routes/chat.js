@@ -239,6 +239,30 @@ router.post("/", async (req, res) => {
   try {
     const { messages = [] } = req.body;
 
+    // SAFETY NET: if the catalog is empty (e.g. a sync failed), Benny must NOT
+    // tell customers we don't carry things. An empty index is a system problem,
+    // never evidence about inventory. Fail honestly instead of lying.
+    const stats = getCatalogStats();
+    if (!stats.sellable) {
+      console.error("CATALOG EMPTY — refusing to answer product questions.");
+      return res.json({
+        reply:
+          "I'm having trouble reaching our product catalog right now, so I don't want to " +
+          "give you wrong information. Please call us at " + PHONE + " or email " + EMAIL +
+          " and the team will take care of you right away.",
+        recommendedProducts: [],
+        handoff: {
+          needed: true,
+          reason: "catalog_unavailable",
+          phone: PHONE,
+          email: EMAIL,
+          mailto: buildMailto("Victory Musical Instruments Inquiry", "")
+        },
+        toolTrace: [],
+        catalogStats: stats
+      });
+    }
+
     const working = [
       { role: "system", content: buildSystemPrompt(loadKnowledge(messages)) },
       ...messages
