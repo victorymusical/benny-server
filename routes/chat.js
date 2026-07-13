@@ -2,298 +2,265 @@ import express from "express";
 import client from "../services/openai.js";
 import fs from "fs";
 import path from "path";
-import { classifyIntentWithAI } from "../services/intentAI.js";
-import {
-  searchCatalog,
-  findByVendor,
-  listVendorsMatching,
-  findByHandle,
-  extractHandlesFromText,
-  slim
-} from "../services/catalogSearch.js";
-import { verifyBeforeSayingNo } from "../services/siteVerify.js";
-import { getCatalogCount, getActiveCount, getDraftCount } from "../services/catalog.js";
+import { TOOL_DEFINITIONS, executeTool, getCatalogStats } from "../services/bennyTools.js";
+import { findByHandle, slim } from "../services/catalogSearch.js";
 
 const router = express.Router();
 
-/* ---------------- KNOWLEDGE (loaded by topic, not all at once) ---------------- */
+/* ---------------- KNOWLEDGE (topic-scoped, not the whole library) ---------------- */
 
-function loadKnowledgeFile(filename) {
+function loadFile(f) {
   try {
-    return fs.readFileSync(path.join(process.cwd(), "knowledge", filename), "utf8");
+    return fs.readFileSync(path.join(process.cwd(), "knowledge", f), "utf8");
   } catch {
     return "";
   }
 }
 
-const CORE_KNOWLEDGE = [
-  "sales-methodology.md",
-  "conversational-rules.md",
-  "greeting-rules.md",
-  "retrieval-safety-rules.md"
+const CORE = ["sales-methodology.md", "conversational-rules.md", "greeting-rules.md"];
+
+const TOPICS = [
+  { k: ["sax", "saxophone"], f: ["saxophones.md", "reed-instruments.md"] },
+  { k: ["clarinet", "oboe", "bassoon"], f: ["reed-instruments.md"] },
+  { k: ["flute", "piccolo"], f: ["flutes-piccolos.md"] },
+  { k: ["trumpet", "cornet", "flugel"], f: ["high-brass.md"] },
+  { k: ["trombone"], f: ["trombones.md", "low-brass.md"] },
+  { k: ["euphonium", "tuba", "french horn"], f: ["low-brass.md"] },
+  { k: ["bass guitar", "electric bass"], f: ["bass-guitars.md"] },
+  { k: ["guitar"], f: ["guitars.md"] },
+  { k: ["keyboard", "piano", "synth"], f: ["keys-and-synths.md"] },
+  { k: ["drum", "percussion", "cymbal", "conga"], f: ["drums.md", "percussion.md"] },
+  { k: ["violin", "viola", "cello"], f: ["orchestral-strings.md"] },
+  { k: ["microphone", "mic", "wireless"], f: ["microphones.md"] },
+  { k: ["interface", "apollo", "volt", "preamp"], f: ["audio-interfaces.md", "studio-workflows.md"] },
+  { k: ["headphone", "studio monitor"], f: ["headphones-and-monitoring.md"] },
+  { k: ["speaker", "pa", "loudspeaker", "mixer", "amplifier", "live sound", "sound system", "subwoofer"], f: ["live-sound.md"] },
+  { k: ["church", "worship", "sanctuary", "congregation"], f: ["house-of-worship.md", "live-sound.md"] },
+  { k: ["stream", "ptz", "camera", "switcher", "broadcast", "video"], f: ["video-production.md", "broadcast-production.md"] },
+  { k: ["dante", "network"], f: ["network-solutions.md"] },
+  { k: ["cable", "xlr"], f: ["cables.md"] },
+  { k: ["school", "band program", "educator", "marching"], f: ["band-and-orchestra-programs.md"] },
+  { k: ["financ", "payment", "monthly", "lease"], f: ["financing-rules.md", "financing-and-sales.md"] }
 ];
 
-const KNOWLEDGE_MAP = [
-  { keys: ["sax", "saxophone"], files: ["saxophones.md", "reed-instruments.md"] },
-  { keys: ["clarinet", "oboe", "bassoon", "reed"], files: ["reed-instruments.md"] },
-  { keys: ["flute", "piccolo"], files: ["flutes-piccolos.md"] },
-  { keys: ["trumpet", "cornet", "flugel"], files: ["high-brass.md"] },
-  { keys: ["trombone"], files: ["trombones.md", "low-brass.md"] },
-  { keys: ["euphonium", "tuba", "french horn", "baritone horn"], files: ["low-brass.md"] },
-  { keys: ["bass guitar", "electric bass"], files: ["bass-guitars.md"] },
-  { keys: ["guitar"], files: ["guitars.md"] },
-  { keys: ["keyboard", "piano", "synth"], files: ["keys-and-synths.md"] },
-  { keys: ["drum", "percussion", "cymbal", "conga", "timbale"], files: ["drums.md", "percussion.md"] },
-  { keys: ["violin", "viola", "cello"], files: ["orchestral-strings.md"] },
-  { keys: ["microphone", "mic", "wireless"], files: ["microphones.md"] },
-  { keys: ["interface", "apollo", "volt", "preamp"], files: ["audio-interfaces.md", "studio-workflows.md"] },
-  { keys: ["headphone", "studio monitor", "monitoring"], files: ["headphones-and-monitoring.md"] },
-  { keys: ["speaker", "pa", "loudspeaker", "mixer", "amplifier", "live sound", "subwoofer"], files: ["live-sound.md"] },
-  { keys: ["church", "worship", "sanctuary", "congregation"], files: ["house-of-worship.md", "live-sound.md"] },
-  { keys: ["stream", "ptz", "camera", "switcher", "broadcast", "video"], files: ["video-production.md", "broadcast-production.md"] },
-  { keys: ["dante", "network", "aes67"], files: ["network-solutions.md"] },
-  { keys: ["cable", "xlr", "hosa", "monster"], files: ["cables.md"] },
-  { keys: ["school", "band program", "educator", "marching"], files: ["band-and-orchestra-programs.md"] },
-  { keys: ["financ", "payment", "monthly", "lease"], files: ["financing-rules.md", "financing-and-sales.md"] }
-];
-
-function loadKnowledge(conversationText) {
-  const hay = " " + conversationText.toLowerCase() + " ";
-  const files = new Set(CORE_KNOWLEDGE);
-  for (const entry of KNOWLEDGE_MAP) {
-    if (entry.keys.some(k => hay.includes(k))) entry.files.forEach(f => files.add(f));
-  }
-  return [...files]
-    .map(f => {
-      const c = loadKnowledgeFile(f);
-      return c ? `\n===== ${f} =====\n${c}` : "";
-    })
-    .join("\n");
+function loadKnowledge(text) {
+  const hay = " " + text.toLowerCase() + " ";
+  const files = new Set(CORE);
+  for (const t of TOPICS) if (t.k.some(k => hay.includes(k))) t.f.forEach(f => files.add(f));
+  return [...files].map(f => {
+    const c = loadFile(f);
+    return c ? `\n===== ${f} =====\n${c}` : "";
+  }).join("\n");
 }
 
-/* ---------------- RETRIEVAL ---------------- */
+/* ---------------- SYSTEM PROMPT ---------------- */
+//
+// Notice how SHORT this is now. We deleted the taxonomy, the scoring gates, the
+// two-pass scaffolding, the role checklists. Benny has tools and judgment.
+// Only the rules that genuinely matter survive.
 
-// Build search queries from the parsed intent. We cast a WIDE net here and let
-// the model do the judging — that's the core design change.
-function buildQueries(intentData, lastUserMessage) {
-  const queries = new Set();
+function buildSystemPrompt(knowledge) {
+  const stats = getCatalogStats();
 
-  for (const item of intentData.requestedItems || []) {
-    const parts = [item.brand, item.product, item.category, item.searchQuery].filter(Boolean);
-    if (parts.length) queries.add(parts.join(" "));
-    if (item.searchQuery) queries.add(item.searchQuery);
-    if (item.product) queries.add(item.product);
-    if (item.brand && item.category) queries.add(`${item.brand} ${item.category}`);
-    if (item.category) queries.add(item.category);
-  }
+  return `
+You are Benny, product advisor for Victory Musical Instruments. You are a
+CONSULTANT first, not a salesperson.
 
-  if (!queries.size && lastUserMessage) queries.add(lastUserMessage);
-  return [...queries].filter(Boolean).slice(0, 6);
-}
-
-async function retrieve(intentData, messages) {
-  const lastUser = [...messages].reverse().find(m => m.role === "user");
-  const lastText = String(lastUser?.content || "");
-
-  const found = new Map();
-
-  // 1. Exact products the customer linked to always win.
-  for (const handle of extractHandlesFromText(lastText)) {
-    const p = findByHandle(handle);
-    if (p) found.set(p.handle, p);
-  }
-
-  // 2. Search the index for each query.
-  const queries = buildQueries(intentData, lastText);
-  for (const q of queries) {
-    for (const p of searchCatalog(q, { limit: 10, includeDrafts: true })) {
-      if (!found.has(p.handle)) found.set(p.handle, p);
-    }
-  }
-
-  // 3. Brand lookups: if a brand was named, pull real products for that brand.
-  for (const item of intentData.requestedItems || []) {
-    if (item.brand) {
-      for (const p of findByVendor(item.brand, 8)) {
-        if (!found.has(p.handle)) found.set(p.handle, p);
-      }
-    }
-  }
-
-  const candidates = [...found.values()].slice(0, 20);
-
-  // 4. THE SECOND OPINION. If the index found nothing sellable, check the live
-  //    site before Benny is ever allowed to say "I can't find that."
-  const hasSellable = candidates.some(p => p.sellable);
-  let liveCheck = null;
-  if (!hasSellable) {
-    const probe = queries[0] || lastText;
-    liveCheck = await verifyBeforeSayingNo(probe);
-  }
-
-  // 5. Complete, authoritative brand list for "what brands do you carry" —
-  //    a real count over the whole catalog, not a guess.
-  const categoryHint = (intentData.requestedItems || [])
-    .map(i => i.category || i.product)
-    .filter(Boolean)
-    .join(" ");
-  const brands = categoryHint ? listVendorsMatching(categoryHint, 30) : [];
-
-  return { candidates, liveCheck, brands };
-}
-
-/* ---------------- CHAT ---------------- */
-
-router.post("/", async (req, res) => {
-  try {
-    const { messages = [] } = req.body;
-
-    const intentData = await classifyIntentWithAI(messages);
-
-    const conversationText = messages
-      .filter(m => m.role === "user")
-      .map(m => String(m.content || ""))
-      .join(" ");
-
-    const knowledge = loadKnowledge(conversationText + " " + JSON.stringify(intentData));
-
-    const { candidates, liveCheck, brands } = await retrieve(intentData, messages);
-
-    const slimmed = candidates.map(slim);
-    const sellable = slimmed.filter(p => p.sellable);
-    const draftOnly = slimmed.filter(p => !p.sellable);
-
-    // Only sellable products get rendered as cards with prices and cart buttons.
-    const recommendedProducts = sellable;
-
-    const systemPrompt = `
-You are Benny, a consultative product advisor for Victory Musical Instruments.
-You are a CONSULTANT FIRST, not a salesperson.
-
-${knowledge}
+You have TOOLS that search Victory's real catalog (${stats.sellable} products you
+can sell, plus ${stats.not_yet_available} we have in our system but cannot sell today).
 
 =====================================================================
-YOUR TWO JOBS. THEY HAVE DIFFERENT RULES. THIS IS THE MOST IMPORTANT
-THING IN THIS PROMPT.
+HOW YOU WORK
 =====================================================================
 
-JOB 1 — THINK AND ADVISE (use your FULL knowledge of the world)
+Use your full knowledge of music and audio — all of it. You understand rooms,
+signal chains, channel counts, what a 40-person sanctuary needs versus a
+500-seat auditorium, why a column PA is not the same as a mixer-and-mains rig.
+Think like a working systems engineer.
 
-You know the entire world of music and audio gear. Use all of it. You may
-freely discuss, explain, and compare ANY product that exists, including ones
-Victory does not sell. You may reason about signal chains, room sizing,
-channel counts, what a 200-seat sanctuary needs, why a desk monitor is not a
-PA speaker. Think like a working systems engineer who has done this for years.
+But every product you OFFER must come from a tool result. Search for it. If you
+did not find it with a tool, you may not recommend it. No exceptions.
 
-When a customer names a product Victory doesn't carry (e.g. a Behringer X32):
-  - Acknowledge you know what it is. Don't pretend ignorance.
-  - Do NOT praise it and do NOT trash it. Stay neutral about gear we don't sell.
-  - Never state its price or specs as if it were ours.
-  - Then say plainly you're not seeing it in our catalog.
-  - ASK if they'd like to see an equivalent from what we carry. Do not force one
-    on them. Offer, don't push.
-
-JOB 2 — RECOMMEND (locked to the catalog, no exceptions)
-
-Every product you OFFER — anything with a price, a link, or an Add to Cart —
-must come from CATALOG PRODUCTS below. You may never invent a product, a price,
-a spec number, a SKU, or a stock status. If it is not in the list, you cannot
-sell it.
-
-Discussing a product ≠ offering a product. You may discuss anything.
-You may only OFFER what is in the list.
+SEARCH AS MUCH AS YOU NEED. You are not limited to one search. When someone
+needs a system, search for each piece separately:
+  search_catalog("powered PA speaker")
+  search_catalog("live mixer 8 channel")
+  search_catalog("speaker stand")
+  search_catalog("dynamic vocal microphone")
+  search_catalog("XLR cable")
+Five searches, five roles. That is normal and correct.
 
 =====================================================================
-THE CATALOG (${getCatalogCount()} products: ${getActiveCount()} sellable, ${getDraftCount()} not yet available)
+WHEN SOMEONE NEEDS A WHOLE SYSTEM
 =====================================================================
 
-SELLABLE PRODUCTS — you may recommend these with price and cart:
-${JSON.stringify(sellable, null, 1)}
+First understand the situation. Ask about the room, the people, what they play,
+whether they stream, roughly what they can spend. One question at a time.
 
-${draftOnly.length ? `NOT YET AVAILABLE — these exist in our system but are NOT ready to sell.
-You KNOW they exist. You may acknowledge them. You may NOT quote a price, give a
-link, or offer a cart button for them. The correct response is: "We may be able to
-source that — let me get you connected with someone on the team to confirm
-availability and pricing."
-${JSON.stringify(draftOnly.map(p => ({ title: p.title, vendor: p.vendor, type: p.productType })), null, 1)}` : ""}
+Then think through what they actually need — the roles the system must fill.
+A church that wants to grow needs a foundation: a mixer with room to expand,
+main speakers sized to the room, stands, microphones, a way to plug in the
+keyboard, and cabling. Not a single portable speaker.
 
-${brands.length ? `BRANDS WE CARRY IN THIS CATEGORY (complete count from the real catalog):
-${JSON.stringify(brands, null, 1)}
-Note: "active" = sellable now. "draft" = in our system, not yet sellable.` : ""}
-
-${liveCheck ? `LIVE SITE CHECK — the catalog had no sellable match, so we searched
-victorymusical.com directly as a second opinion:
-${liveCheck.foundOnLiveSite
-  ? `The live site DID find these. The catalog may be out of date. Acknowledge these exist and offer to connect them with the team to confirm:
-${JSON.stringify(liveCheck.liveResults, null, 1)}`
-  : `The live site also found nothing. You may now honestly say you cannot see it.`}` : ""}
+Then search the catalog for each role and build them a real system from real
+Victory products. If a role has no good match, say so plainly and offer to have
+the team source it. Never jam the wrong product into a role.
 
 =====================================================================
-HOW TO SPEAK
+HARD RULES — THESE ARE ABSOLUTE
 =====================================================================
 
-NEVER say "we don't sell that" or "we don't carry that brand." You cannot know
-that. Say instead: "I'm not able to see that in our catalog at the moment."
-That is honest. The other is a claim you can't back up.
+1. NEVER recommend a product you did not find with a tool. Not from memory, not
+   from general knowledge. If you want to suggest something, search for it first.
 
-The brand list above is a REAL count from the catalog. If a brand isn't in it,
-that still doesn't mean we don't carry it — it means you're not seeing it. Never
-declare a brand to be the "only" one we carry.
+2. NEVER send a customer to another retailer. Not "you might find it at other
+   authorized dealers," not "try a specialty pro audio store." Never. If Victory
+   can't fill it, the answer is the Victory team — never a competitor.
 
-For a whole-system request ("I need everything for my church"):
-  - Ask 1-3 short scoping questions FIRST, one at a time (seats, room size,
-    livestream, budget). Do not dump a product list.
-  - Then design the system by ROLE (mains sized to the room, subwoofer, mixer
-    with enough channels, wireless, monitors, cabling).
-  - Then fill each role with a real product from the catalog.
-  - If a role has no good fit, say so and offer the team. Never jam an
-    undersized product into a role it can't fill.
+3. NEVER say "we don't sell that" or "we don't carry that brand." You cannot know
+   that. Before you say you can't find something, call check_live_website. Only
+   if BOTH the catalog and the live site come up empty may you say:
+   "I'm not able to see that in our catalog at the moment." Then offer the team.
 
-Be concise and warm. One question at a time. Remember what they already told you.
+4. When a customer names a product we don't carry: acknowledge you know what it
+   is, stay neutral (don't praise it, don't trash it), don't quote its price or
+   specs as if it were ours, and ASK if they'd like to see an equivalent we do
+   carry. Offer — don't push.
+
+5. Products marked not sellable (drafts) — you may acknowledge they exist, but
+   you may NEVER quote a price or offer a cart for them. Say: "We may be able to
+   source that — let me connect you with the team to confirm availability."
+
+6. Never invent a price, spec, SKU, or stock status. Only what the tools return.
 
 =====================================================================
 SHOWING PRODUCTS
 =====================================================================
 
-Do NOT paste URLs or "Add to cart:" text. The page draws product cards for you.
+Do NOT paste URLs or write "Add to cart". The page draws product cards for you.
 
-To show a product, write one sentence about it, then put a marker on its OWN line:
+To show a product, write a sentence about it, then put a marker on its own line:
 [[PRODUCT:handle]]
 
-Use the exact "handle" from SELLABLE PRODUCTS. Only sellable products get markers.
-Never put a marker on a not-yet-available product — it has no price and no cart.
-
-Do not write prices yourself. The card shows them.
+Use the exact handle from a tool result. Only for sellable products. Don't write
+prices yourself — the card shows them.
 
 =====================================================================
-CLOSING
-=====================================================================
 
-Help them explore, learn, design, and build a cart. You can assemble a
-multi-item system and summarize it, but never claim an order has been placed.
-When they're ready, or when something needs a human, invite them to talk with
-the Victory team to confirm final availability and pricing. Frame it as the
-natural next step, not as you failing. Never overpromise.
+Be warm and concise. One question at a time. Remember what they told you.
+You can build a full system and summarize it, but never claim an order is placed.
+When they're ready, invite them to talk with the Victory team to finalize.
+
+${knowledge}
 `.trim();
+}
 
-    const response = await client.chat.completions.create({
-      model: "gpt-4.1-mini",
-      temperature: 0.4,
-      messages: [{ role: "system", content: systemPrompt }, ...messages]
-    });
+/* ---------------- AGENT LOOP ---------------- */
+
+const MAX_TOOL_ROUNDS = 8; // enough for a full system build (6+ role searches)
+
+router.post("/", async (req, res) => {
+  try {
+    const { messages = [] } = req.body;
+
+    const convoText = messages
+      .filter(m => m.role === "user")
+      .map(m => String(m.content || ""))
+      .join(" ");
+
+    const knowledge = loadKnowledge(convoText);
+
+    const working = [
+      { role: "system", content: buildSystemPrompt(knowledge) },
+      ...messages
+    ];
+
+    // Every product Benny actually saw via tools. The frontend renders cards
+    // only from these, so a card can never exist for a product he didn't find.
+    const seenProducts = new Map();
+    const toolTrace = [];
+
+    let finalMessage = null;
+
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      const response = await client.chat.completions.create({
+        model: "gpt-4.1-mini",
+        temperature: 0.4,
+        messages: working,
+        tools: TOOL_DEFINITIONS,
+        tool_choice: "auto"
+      });
+
+      const msg = response.choices[0].message;
+      working.push(msg);
+
+      const calls = msg.tool_calls || [];
+
+      if (!calls.length) {
+        finalMessage = msg;
+        break;
+      }
+
+      // Run every tool Benny asked for.
+      for (const call of calls) {
+        let args = {};
+        try {
+          args = JSON.parse(call.function.arguments || "{}");
+        } catch {
+          args = {};
+        }
+
+        const result = await executeTool(call.function.name, args);
+
+        toolTrace.push({ tool: call.function.name, args, found: result.found ?? result.products?.length });
+
+        // Remember every sellable product he saw, so the UI can render its card.
+        const collect = p => {
+          if (p && p.handle && p.sellable) seenProducts.set(p.handle, p);
+        };
+        (result.products || []).forEach(collect);
+        if (result.product) collect(result.product);
+
+        working.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: JSON.stringify(result)
+        });
+      }
+    }
+
+    // Safety: if he burned all rounds on tools, ask for a final answer.
+    if (!finalMessage) {
+      const wrap = await client.chat.completions.create({
+        model: "gpt-4.1-mini",
+        temperature: 0.4,
+        messages: [
+          ...working,
+          {
+            role: "system",
+            content: "Give your final answer to the customer now, using what you found. Do not call more tools."
+          }
+        ]
+      });
+      finalMessage = wrap.choices[0].message;
+    }
+
+    const reply = finalMessage?.content || "";
+
+    // Cards come ONLY from products Benny actually retrieved AND referenced.
+    const referenced = [
+      ...new Set([...String(reply).matchAll(/\[\[PRODUCT:([^\]]+)\]\]/g)].map(m => m[1].trim()))
+    ];
+
+    const recommendedProducts = referenced
+      .map(h => seenProducts.get(h) || slim(findByHandle(h)))
+      .filter(p => p && p.sellable);
 
     res.json({
-      reply: response.choices[0].message.content,
+      reply,
       recommendedProducts,
-      draftProducts: draftOnly,
-      brands,
-      liveCheck,
-      intentData,
-      catalogStats: {
-        total: getCatalogCount(),
-        active: getActiveCount(),
-        draft: getDraftCount()
-      }
+      toolTrace,          // useful for debugging what Benny searched for
+      catalogStats: getCatalogStats()
     });
   } catch (error) {
     console.error(error);
