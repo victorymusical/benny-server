@@ -66,7 +66,7 @@ Return ONLY a JSON object, no fences:
   "must_have": ["what a correct recommendation must satisfy"],
   "avoid": ["what must NOT be recommended and why, e.g. 'fixed-frequency
             single-antenna wireless: will drop out in congested RF'"],
-  "search_strategy": ["2-5 catalog search queries phrased as product nouns,
+  "search_strategy": ["2-5 catalog search queries, ALWAYS IN ENGLISH (the catalog is English - translate if the conversation is not), phrased as product nouns,
                       e.g. 'true diversity wireless vocal system',
                       'frequency agile handheld wireless'"],
   "brands_mentioned": ["any brand the customer named - these MUST be looked up

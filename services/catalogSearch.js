@@ -16,7 +16,15 @@
 import { getAllProducts, getByHandle } from "./catalog.js";
 
 function norm(s = "") {
-  return String(s).toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+  // Fold diacritics FIRST (saxofón -> saxofon, París -> paris) so accented
+  // characters don't shatter words into junk tokens.
+  return String(s)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 const STOP = new Set([
@@ -70,7 +78,10 @@ function scoreProduct(product, queryTokens) {
   const joined = queryTokens.join(" ");
   if (joined && title.includes(joined)) score += 35;
 
-  // Nudges, not gates.
+  // Nudges apply ONLY to products that actually matched something. Without
+  // this guard, every sellable product scores >0 on any query, and nonsense
+  // queries return random products.
+  if (score === 0) return 0;
   if (product.sellable) score += 5;
   if (product.available) score += 2;
 
@@ -183,6 +194,13 @@ export function slim(product) {
     image: product.image,
     addToCartUrl: product.addToCartUrl,
     sku: product.sku,
+
+    // WHAT THE PRODUCT ACTUALLY IS. Titles are marketing copy; the description
+    // is where "capsule head for RE3 handheld transmitters" or "clip-on
+    // instrument microphone" actually lives. Hiding this forced the agent and
+    // validator to judge books by their covers - that's how handheld capsule
+    // heads got sold as clip-on sax mics.
+    description: (product.description || "").slice(0, 300),
 
     // VARIANT AWARENESS. Attributes like reed strength, sax finish, or cable
     // length live HERE, never in the product title. Benny must look here before

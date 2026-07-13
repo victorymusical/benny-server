@@ -64,6 +64,11 @@ export const TOOL_DEFINITIONS = [
             type: "string",
             description:
               "BROAD. Product noun + instrument only. Words that appear in a TITLE. " +
+              "*** ALWAYS IN ENGLISH — the catalog's titles and types are English. If the " +
+              "conversation is in Spanish or any other language, TRANSLATE the need into an " +
+              "English query ('microfono para saxofon alto' -> 'alto saxophone wireless " +
+              "microphone'). A non-English query returns nothing and makes you wrongly tell " +
+              "the customer we have nothing. *** " +
               "e.g. 'alto saxophone reed', 'vocal microphone', 'powered PA speaker'. " +
               "NEVER include strength, size, finish, or color — those are variant options."
           },
