@@ -133,6 +133,34 @@ NEVER OFFER THE WRONG INSTRUMENT. If they ask for ALTO, do not offer a BARITONE
 reed and call it "suitable." It is a different instrument. That is worse than
 saying nothing.
 
+NEVER OFFER THE WRONG BRAND. If the customer asks "do you have Hosa?", do NOT say
+"yes we carry Hosa" and then show an On-Stage cable. The product you show MUST be
+the brand they asked for. Use search_by_brand to find it. If you genuinely can't
+find that brand, say you're not seeing it — do NOT quietly swap in a different one.
+Claiming one brand and showing another destroys trust instantly.
+
+NEVER OFFER THE WRONG PRODUCT CATEGORY. A lavalier mic is not a wireless system.
+A studio interface is not a mixing console. Read the productType before you offer.
+
+#####################################################################
+# YOU CANNOT ADD ANYTHING TO THE CART
+#####################################################################
+
+You have NO ability to modify the customer's cart. NONE.
+
+NEVER say "I've added it to your cart" or "I've added the reed to your cart."
+That is FALSE. The customer will go to checkout, find an empty cart, and lose
+trust in us.
+
+What actually happens: you recommend a product, the page shows a card with an
+Add to Cart button, and THE CUSTOMER clicks it.
+
+If they say "add it to my cart," respond with something like:
+  "Here it is — just hit Add to Cart below and it's yours."
+  "Perfect. The Add to Cart button is right below."
+
+You OFFER. They ACT. Never claim you did it for them.
+
 #####################################################################
 # 3. QUALIFY — BUT DON'T INTERROGATE
 #####################################################################
@@ -186,7 +214,11 @@ Your entire response is one JSON object. No markdown fences, no text around it.
 {
   "reply": "Your message. Warm, concise, conversational.",
   "products": [
-    { "handle": "exact-handle-from-a-catalog-tool", "why": "why THIS product meets the spec you wrote" }
+    {
+      "handle": "exact-handle-from-a-catalog-tool",
+      "why": "why THIS product meets the spec you wrote",
+      "variant": "optional — the exact variant title, e.g. 'Soft (1.5-2.0)' or '2.5'"
+    }
   ],
   "handoff": {
     "needed": true,
@@ -197,6 +229,10 @@ Your entire response is one JSON object. No markdown fences, no text around it.
 
 - "products": ONLY handles from search_catalog / search_by_brand / get_product_by_handle.
   NEVER from check_live_website — those are not sellable and have no verified price.
+- "variant": if the product has options (reed strength, cable length, finish) and you've
+  identified the right one for this customer, put its EXACT title here. The Add to Cart
+  button will then add THAT variant. If you omit it, the default variant is used.
+  Copy the variant title exactly as it appears in the tool result.
 - Every product needs a real "why" tied to your spec. If you can't write one, remove it.
 - NEVER write prices in "reply". NEVER paste URLs. NEVER write "Add to Cart".
   The card shows image, price, and button automatically.
@@ -368,18 +404,62 @@ router.post("/", async (req, res) => {
     // THIS conversation turn and is marked sellable. Anything else is stripped —
     // no card, no price, no cart button. This is what makes it impossible for a
     // live-site result to be sold.
+    //
+    // ALSO: a product with no price, or a price of 0.00, is a BROKEN RECORD.
+    // It must never reach a customer with an Add to Cart button. That's a
+    // liability, not a sale.
     const rejected = [];
+    const seenHandles = new Set();
+
+    const isSellableRecord = p =>
+      p &&
+      p.sellable &&
+      typeof p.priceAmount === "number" &&
+      p.priceAmount > 0;
+
     const recommendedProducts = (parsed?.products || [])
       .map(p => {
+        // Dedupe: never show the same product twice in one answer.
+        if (seenHandles.has(p.handle)) return null;
+
         const fromCatalog = sellableFromCatalog.get(p.handle);
-        if (fromCatalog) return { ...fromCatalog, why: p.why || null };
+        const candidate = fromCatalog || slim(findByHandle(p.handle));
 
-        // Not retrieved via a catalog tool this turn — verify against the index.
-        const verified = slim(findByHandle(p.handle));
-        if (verified && verified.sellable) return { ...verified, why: p.why || null };
+        if (!isSellableRecord(candidate)) {
+          rejected.push(p.handle);
+          return null;
+        }
 
-        rejected.push(p.handle);
-        return null;
+        seenHandles.add(p.handle);
+
+        const result = { ...candidate, why: p.why || null };
+
+        // If Benny identified a specific variant (reed strength, cable length,
+        // sax finish), make the Add to Cart button add THAT variant — not the
+        // default. Otherwise a customer asking for a soft reed gets whatever
+        // strength happens to be first.
+        if (p.variant && Array.isArray(candidate.variants)) {
+          const wanted = String(p.variant).trim().toLowerCase();
+          const match = candidate.variants.find(v => {
+            if (!v || !v.available) return false;
+            if (String(v.title || "").trim().toLowerCase() === wanted) return true;
+            // Also match on option values, e.g. Strength = "2.5"
+            return (v.options || []).some(
+              o => String(o.value || "").trim().toLowerCase() === wanted
+            );
+          });
+
+          if (match && match.addToCartUrl) {
+            result.addToCartUrl = match.addToCartUrl;
+            result.selectedVariant = match.title;
+            if (typeof match.price === "number" && match.price > 0) {
+              result.priceAmount = match.price;
+              result.price = `${candidate.currencyCode || "USD"} ${match.price}`;
+            }
+          }
+        }
+
+        return result;
       })
       .filter(Boolean);
 
