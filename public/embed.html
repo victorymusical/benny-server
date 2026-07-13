@@ -774,6 +774,14 @@
     .typing span:nth-child(2) { animation-delay: 0.15s; }
     .typing span:nth-child(3) { animation-delay: 0.3s; }
 
+    .typing-status {
+      font-size: 13px;
+      color: var(--text-secondary, #8a8578);
+      margin-left: 10px;
+      font-style: italic;
+      transition: opacity 0.4s ease;
+    }
+
     @keyframes typingPulse {
       0%, 80%, 100% {
         transform: translateY(0);
@@ -1194,9 +1202,10 @@
       if (options.typing) {
         bubble.innerHTML = `
           <span class="speaker assistant-name">Benny</span>
-          <div class="typing"><span></span><span></span><span></span></div>
+          <div class="typing"><span></span><span></span><span></span><span class="typing-status" id="typingStatus"></span></div>
         `;
         row.id = "typingRow";
+        startTypingStatus();
       } else {
         const speaker = document.createElement("span");
         speaker.className = `speaker ${role === "user" ? "user-name" : "assistant-name"}`;
@@ -1262,7 +1271,43 @@
       chat.scrollTop = chat.scrollHeight;
     }
 
+    // Friendly, staged "I'm working on it" messages. Consultative answers can
+    // take 10-20s (assess -> search -> validate), and a silent screen reads as
+    // frozen. Staged status reads as effort. Language-matched to the customer.
+    let typingTimers = [];
+
+    function lastUserLooksSpanish() {
+      const rows = document.querySelectorAll(".user-row .message-text");
+      const last = rows.length ? rows[rows.length - 1].textContent : "";
+      return /[¿¡ñáéíóú]|\b(hola|necesito|tienes|busco|quiero|gracias|para|iglesia|precio|cu[aá]nto)\b/i.test(last);
+    }
+
+    function startTypingStatus() {
+      const es = lastUserLooksSpanish();
+      const stages = es
+        ? ["Benny está pensando…", "Revisando nuestro catálogo…", "Comparando opciones para ti…", "Confirmando que sea la opción correcta…", "Ya casi…"]
+        : ["Benny is thinking…", "Checking our catalog…", "Comparing options for you…", "Making sure it's the right fit…", "Almost there…"];
+      const delays = [0, 3500, 8000, 14000, 22000];
+
+      stopTypingStatus();
+      typingTimers = delays.map((ms, i) =>
+        setTimeout(() => {
+          const el = document.getElementById("typingStatus");
+          if (el) {
+            el.style.opacity = "0";
+            setTimeout(() => { el.textContent = stages[i]; el.style.opacity = "1"; }, 200);
+          }
+        }, ms)
+      );
+    }
+
+    function stopTypingStatus() {
+      typingTimers.forEach(clearTimeout);
+      typingTimers = [];
+    }
+
     function removeTyping() {
+      stopTypingStatus();
       const typing = document.getElementById("typingRow");
       if (typing) typing.remove();
     }
