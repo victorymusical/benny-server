@@ -42,7 +42,7 @@ function buildCartUrl(variantId, qty = 1) {
 
 const ADMIN_QUERY = `
   query AdminCatalog($cursor: String) {
-    products(first: 250, after: $cursor, query: "status:active OR status:draft") {
+    products(first: 100, after: $cursor, query: "status:active OR status:draft") {
       pageInfo { hasNextPage endCursor }
       edges {
         node {
@@ -50,8 +50,14 @@ const ADMIN_QUERY = `
           featuredMedia { preview { image { url } } }
           collections(first: 10) { edges { node { handle } } }
           priceRangeV2 { minVariantPrice { amount currencyCode } }
-          variants(first: 1) {
-            edges { node { id sku price compareAtPrice availableForSale } }
+          options { name values }
+          variants(first: 30) {
+            edges {
+              node {
+                id title sku price compareAtPrice availableForSale
+                selectedOptions { name value }
+              }
+            }
           }
         }
       }
@@ -60,12 +66,41 @@ const ADMIN_QUERY = `
 `;
 
 function mapAdminNode(node) {
-  const variant = node.variants?.edges?.[0]?.node || null;
   const isDraft = String(node.status).toUpperCase() === "DRAFT";
-
-  const priceAmount = toNumber(variant?.price ?? node.priceRangeV2?.minVariantPrice?.amount);
-  const compareAtPriceAmount = toNumber(variant?.compareAtPrice);
   const currencyCode = node.priceRangeV2?.minVariantPrice?.currencyCode || "USD";
+
+  // ALL variants, not just the first. This is how Benny finally knows that a
+  // reed comes in strengths, a sax in finishes, a cable in lengths. Before this,
+  // he was blind to every option and would tell a customer we don't carry a
+  // "soft" reed — because "soft" lives in the VARIANT, never in the title.
+  const allVariants = (node.variants?.edges || []).map(e => {
+    const v = e.node;
+    const vPrice = toNumber(v.price);
+    const vCompare = toNumber(v.compareAtPrice);
+    return {
+      title: v.title,                        // e.g. "2.5" or "Gold Lacquer"
+      sku: v.sku || null,
+      price: vPrice,
+      compareAtPrice: vCompare,
+      available: v.availableForSale,
+      options: (v.selectedOptions || []).map(o => ({ name: o.name, value: o.value })),
+      addToCartUrl: isDraft ? null : buildCartUrl(numericId(v.id), 1)
+    };
+  });
+
+  const sellableVariants = allVariants.filter(v => v.available);
+  const primary = sellableVariants[0] || allVariants[0] || null;
+
+  // The option axes, e.g. [{ name: "Strength", values: ["2","2.5","3"] }]
+  const optionSets = (node.options || [])
+    .filter(o => o && o.name && (o.values || []).length)
+    // Shopify uses a placeholder "Title: Default Title" for products with no
+    // real options. That's noise — drop it.
+    .filter(o => !(o.values.length === 1 && o.values[0] === "Default Title"))
+    .map(o => ({ name: o.name, values: o.values }));
+
+  const priceAmount = toNumber(primary?.price ?? node.priceRangeV2?.minVariantPrice?.amount);
+  const compareAtPriceAmount = toNumber(primary?.compareAtPrice);
 
   const isOnSale =
     !isDraft &&
@@ -82,12 +117,14 @@ function mapAdminNode(node) {
     description: (node.description || "").slice(0, 400),
     collections: (node.collections?.edges || []).map(e => e.node.handle),
 
-    // THE CRITICAL FIELD. Everything downstream keys off this.
     status: isDraft ? "draft" : "active",
     sellable: !isDraft,
 
-    // Draft products carry NO price and NO cart link. Structurally impossible
-    // for Benny to quote a price on something we can't sell today.
+    // Variant awareness
+    options: optionSets,                       // what choices exist
+    variants: isDraft ? [] : allVariants,      // every buyable variant + its cart link
+    hasVariants: optionSets.length > 0,
+
     url: isDraft ? null : `https://${SHOPIFY_PUBLIC_DOMAIN}/products/${node.handle}`,
     image: node.featuredMedia?.preview?.image?.url || null,
     price: isDraft ? null : (priceAmount !== null ? `${currencyCode} ${priceAmount}` : null),
@@ -96,9 +133,9 @@ function mapAdminNode(node) {
     compareAtPrice: isDraft || compareAtPriceAmount === null ? null : `${currencyCode} ${compareAtPriceAmount}`,
     compareAtPriceAmount: isDraft ? null : compareAtPriceAmount,
     isOnSale,
-    available: isDraft ? null : (variant ? variant.availableForSale : null),
-    sku: variant?.sku || null,
-    addToCartUrl: isDraft ? null : buildCartUrl(numericId(variant?.id), 1)
+    available: isDraft ? null : (primary ? primary.available : null),
+    sku: primary?.sku || null,
+    addToCartUrl: isDraft ? null : (primary?.addToCartUrl || null)
   };
 }
 

@@ -157,8 +157,8 @@ export function slim(product) {
     title: product.title,
     vendor: product.vendor,
     productType: product.productType,
-    status: product.status,              // "active" | "draft"
-    sellable: product.sellable,          // true only if we can sell it today
+    status: product.status,
+    sellable: product.sellable,
     price: product.price,
     priceAmount: product.priceAmount,
     compareAtPriceAmount: product.compareAtPriceAmount,
@@ -168,6 +168,20 @@ export function slim(product) {
     url: product.url,
     image: product.image,
     addToCartUrl: product.addToCartUrl,
-    sku: product.sku
+    sku: product.sku,
+
+    // VARIANT AWARENESS. Attributes like reed strength, sax finish, or cable
+    // length live HERE, never in the product title. Benny must look here before
+    // concluding we don't carry a "soft" reed or a "silver" trumpet.
+    options: product.options || [],
+    variants: (product.variants || []).map(v => ({
+      title: v.title,
+      sku: v.sku,
+      price: v.price,
+      available: v.available,
+      options: v.options,
+      addToCartUrl: v.addToCartUrl
+    })),
+    hasVariants: !!product.hasVariants
   };
 }
