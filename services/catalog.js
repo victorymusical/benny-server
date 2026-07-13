@@ -1,13 +1,15 @@
-// catalog.js
+// catalog.js — Benny's own copy of the Victory catalog.
 //
-// Benny's own copy of your catalog.
+// KEY CHANGE IN THIS VERSION:
+// We now sync BOTH active and draft products, tagged distinctly.
 //
-// It syncs via the Admin API when Admin credentials are present (this sees EVERY
-// product, regardless of sales channel), and falls back to the Storefront API
-// when they are not (which only sees products published to the Headless channel).
+//   ACTIVE  -> Benny can recommend it: price, stock, Add to Cart button.
+//   DRAFT   -> Benny KNOWS it exists but can NEVER sell it. No price, no cart.
+//              Correct answer is "we can likely source that, let's connect you
+//              with the team."
 //
-// This means: if the Admin credentials work, you never need to publish products
-// to Headless again. If they fail, Benny still works exactly as he does today.
+// Syncs via the Admin API (sees everything). Falls back to the Storefront API
+// if Admin credentials are missing, so it can never leave Benny worse off.
 
 import fs from "fs";
 import path from "path";
@@ -36,40 +38,20 @@ function buildCartUrl(variantId, qty = 1) {
   return `https://${SHOPIFY_PUBLIC_DOMAIN}/cart/${variantId}:${qty}`;
 }
 
-/* ------------------------------------------------------------------ */
-/* ADMIN API SYNC  (sees everything)                                    */
-/* ------------------------------------------------------------------ */
+/* ---------------- ADMIN API (sees active + draft) ---------------- */
 
 const ADMIN_QUERY = `
   query AdminCatalog($cursor: String) {
-    products(first: 250, after: $cursor, query: "status:active") {
+    products(first: 250, after: $cursor, query: "status:active OR status:draft") {
       pageInfo { hasNextPage endCursor }
       edges {
         node {
-          id
-          title
-          handle
-          vendor
-          productType
-          tags
-          status
-          description
+          title handle vendor productType tags status description
           featuredMedia { preview { image { url } } }
           collections(first: 10) { edges { node { handle } } }
-          priceRangeV2 {
-            minVariantPrice { amount currencyCode }
-          }
+          priceRangeV2 { minVariantPrice { amount currencyCode } }
           variants(first: 1) {
-            edges {
-              node {
-                id
-                sku
-                price
-                compareAtPrice
-                inventoryQuantity
-                availableForSale
-              }
-            }
+            edges { node { id sku price compareAtPrice availableForSale } }
           }
         }
       }
@@ -79,11 +61,14 @@ const ADMIN_QUERY = `
 
 function mapAdminNode(node) {
   const variant = node.variants?.edges?.[0]?.node || null;
+  const isDraft = String(node.status).toUpperCase() === "DRAFT";
+
   const priceAmount = toNumber(variant?.price ?? node.priceRangeV2?.minVariantPrice?.amount);
   const compareAtPriceAmount = toNumber(variant?.compareAtPrice);
   const currencyCode = node.priceRangeV2?.minVariantPrice?.currencyCode || "USD";
 
   const isOnSale =
+    !isDraft &&
     compareAtPriceAmount !== null &&
     priceAmount !== null &&
     compareAtPriceAmount > priceAmount;
@@ -94,19 +79,26 @@ function mapAdminNode(node) {
     vendor: node.vendor || "",
     productType: node.productType || "",
     tags: node.tags || [],
-    description: node.description || "",
+    description: (node.description || "").slice(0, 400),
     collections: (node.collections?.edges || []).map(e => e.node.handle),
-    url: `https://${SHOPIFY_PUBLIC_DOMAIN}/products/${node.handle}`,
+
+    // THE CRITICAL FIELD. Everything downstream keys off this.
+    status: isDraft ? "draft" : "active",
+    sellable: !isDraft,
+
+    // Draft products carry NO price and NO cart link. Structurally impossible
+    // for Benny to quote a price on something we can't sell today.
+    url: isDraft ? null : `https://${SHOPIFY_PUBLIC_DOMAIN}/products/${node.handle}`,
     image: node.featuredMedia?.preview?.image?.url || null,
-    price: priceAmount !== null ? `${currencyCode} ${priceAmount}` : null,
-    priceAmount,
-    currencyCode,
-    compareAtPrice: compareAtPriceAmount !== null ? `${currencyCode} ${compareAtPriceAmount}` : null,
-    compareAtPriceAmount,
+    price: isDraft ? null : (priceAmount !== null ? `${currencyCode} ${priceAmount}` : null),
+    priceAmount: isDraft ? null : priceAmount,
+    currencyCode: isDraft ? null : currencyCode,
+    compareAtPrice: isDraft || compareAtPriceAmount === null ? null : `${currencyCode} ${compareAtPriceAmount}`,
+    compareAtPriceAmount: isDraft ? null : compareAtPriceAmount,
     isOnSale,
-    available: variant ? variant.availableForSale : null,
+    available: isDraft ? null : (variant ? variant.availableForSale : null),
     sku: variant?.sku || null,
-    addToCartUrl: buildCartUrl(numericId(variant?.id), 1)
+    addToCartUrl: isDraft ? null : buildCartUrl(numericId(variant?.id), 1)
   };
 }
 
@@ -136,16 +128,14 @@ async function syncViaAdmin({ verbose }) {
     hasNext = conn.pageInfo.hasNextPage;
     cursor = conn.pageInfo.endCursor;
     page += 1;
-    if (verbose) console.log(`[admin] page ${page}: ${all.length} products`);
-    await sleep(250);
+    if (verbose && page % 5 === 0) console.log(`[admin] page ${page}: ${all.length} products`);
+    await sleep(200);
   }
 
   return all;
 }
 
-/* ------------------------------------------------------------------ */
-/* STOREFRONT API SYNC  (fallback: only Headless-published products)    */
-/* ------------------------------------------------------------------ */
+/* ---------------- STOREFRONT FALLBACK (active only) ---------------- */
 
 const STOREFRONT_QUERY = `
   query Catalog($cursor: String) {
@@ -158,9 +148,7 @@ const STOREFRONT_QUERY = `
           priceRange { minVariantPrice { amount currencyCode } }
           compareAtPriceRange { minVariantPrice { amount currencyCode } }
           collections(first: 10) { edges { node { handle } } }
-          variants(first: 1) {
-            edges { node { id sku availableForSale price { amount } compareAtPrice { amount } } }
-          }
+          variants(first: 1) { edges { node { id sku price { amount } compareAtPrice { amount } } } }
         }
       }
     }
@@ -195,8 +183,10 @@ function mapStorefrontNode(node) {
     vendor: node.vendor || "",
     productType: node.productType || "",
     tags: node.tags || [],
-    description: node.description || "",
+    description: (node.description || "").slice(0, 400),
     collections: (node.collections?.edges || []).map(e => e.node.handle),
+    status: "active",
+    sellable: true,
     url: node.onlineStoreUrl || `https://${SHOPIFY_PUBLIC_DOMAIN}/products/${node.handle}`,
     image: node.featuredImage?.url || null,
     price: min ? `${min.currencyCode} ${min.amount}` : null,
@@ -204,8 +194,7 @@ function mapStorefrontNode(node) {
     currencyCode: min?.currencyCode || "USD",
     compareAtPrice: cmp ? `${cmp.currencyCode} ${cmp.amount}` : null,
     compareAtPriceAmount,
-    isOnSale:
-      compareAtPriceAmount !== null && priceAmount !== null && compareAtPriceAmount > priceAmount,
+    isOnSale: compareAtPriceAmount !== null && priceAmount !== null && compareAtPriceAmount > priceAmount,
     available: node.availableForSale,
     sku: variant?.sku || null,
     addToCartUrl: buildCartUrl(numericId(variant?.id), 1)
@@ -216,25 +205,18 @@ async function syncViaStorefront({ verbose }) {
   const all = [];
   let cursor = null;
   let hasNext = true;
-  let page = 0;
-
   while (hasNext) {
     const data = await storefrontGraphQL(STOREFRONT_QUERY, { cursor });
     const conn = data.products;
     for (const edge of conn.edges) all.push(mapStorefrontNode(edge.node));
     hasNext = conn.pageInfo.hasNextPage;
     cursor = conn.pageInfo.endCursor;
-    page += 1;
-    if (verbose) console.log(`[storefront] page ${page}: ${all.length} products`);
-    await sleep(250);
+    await sleep(200);
   }
-
   return all;
 }
 
-/* ------------------------------------------------------------------ */
-/* PUBLIC API                                                           */
-/* ------------------------------------------------------------------ */
+/* ---------------- PUBLIC API ---------------- */
 
 export async function syncCatalog({ verbose = true } = {}) {
   if (isSyncing) return { skipped: true, reason: "Sync already running." };
@@ -273,9 +255,22 @@ export async function syncCatalog({ verbose = true } = {}) {
     }
 
     const seconds = ((Date.now() - started) / 1000).toFixed(1);
-    if (verbose) console.log(`Catalog sync complete via ${source}: ${all.length} products in ${seconds}s`);
+    const activeCount = all.filter(p => p.sellable).length;
+    const draftCount = all.length - activeCount;
+    if (verbose) {
+      console.log(`Sync complete via ${source}: ${all.length} products (${activeCount} active, ${draftCount} draft) in ${seconds}s`);
+    }
 
-    return { ok: true, source, count: all.length, seconds, lastSync, summary: lastSummary };
+    return {
+      ok: true,
+      source,
+      count: all.length,
+      active: activeCount,
+      draft: draftCount,
+      seconds,
+      lastSync,
+      summary: lastSummary
+    };
   } finally {
     isSyncing = false;
   }
@@ -290,7 +285,7 @@ export function loadCatalogFromDisk() {
     lastSync = raw.lastSync || null;
     lastSource = raw.source || null;
     lastSummary = summarizeCatalog(catalog);
-    console.log(`Loaded ${catalog.length} products from disk (${lastSource}, ${lastSync}).`);
+    console.log(`Loaded ${catalog.length} products from disk (${lastSource}).`);
     return true;
   } catch (err) {
     console.warn("Could not load saved catalog:", err.message);
@@ -300,45 +295,39 @@ export function loadCatalogFromDisk() {
 
 export function summarizeCatalog(list = catalog) {
   const total = list.length;
-  const count = p => list.filter(p).length;
+  const active = list.filter(p => p.sellable);
+  const draft = list.filter(p => !p.sellable);
   const pct = n => (total ? Math.round((n / total) * 100) : 0);
 
-  const tally = key => {
+  const tally = (arr, key) => {
     const m = new Map();
-    for (const p of list) {
+    for (const p of arr) {
       const v = (p[key] || "").trim();
       if (v) m.set(v, (m.get(v) || 0) + 1);
     }
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   };
 
-  const collMap = new Map();
-  for (const p of list) {
-    for (const c of p.collections || []) collMap.set(c, (collMap.get(c) || 0) + 1);
-  }
-
-  const withType = count(p => p.productType && p.productType.trim());
-  const withImage = count(p => p.image);
-  const available = count(p => p.available);
+  const withType = list.filter(p => p.productType && p.productType.trim()).length;
+  const withImage = list.filter(p => p.image).length;
 
   return {
     total,
+    active: active.length,
+    draft: draft.length,
     source: lastSource,
     coverage: {
       productType: { count: withType, pct: pct(withType) },
-      image: { count: withImage, pct: pct(withImage) },
-      available: { count: available, pct: pct(available) }
+      image: { count: withImage, pct: pct(withImage) }
     },
-    vendors: { distinct: tally("vendor").length, top: tally("vendor").slice(0, 30) },
-    productTypes: { distinct: tally("productType").length, top: tally("productType").slice(0, 40) },
-    collections: {
-      distinct: collMap.size,
-      top: [...collMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40)
-    }
+    vendors: { distinct: tally(list, "vendor").length, top: tally(list, "vendor").slice(0, 30) },
+    productTypes: { distinct: tally(list, "productType").length, top: tally(list, "productType").slice(0, 40) }
   };
 }
 
 export const getCatalogCount = () => catalog.length;
+export const getActiveCount = () => catalog.filter(p => p.sellable).length;
+export const getDraftCount = () => catalog.filter(p => !p.sellable).length;
 export const getLastSync = () => lastSync;
 export const getLastSource = () => lastSource;
 export const getLastSummary = () => lastSummary || summarizeCatalog(catalog);

@@ -1,339 +1,173 @@
-// catalogSearch.js
+// catalogSearch.js — finds candidate products in Benny's local index.
 //
-// Benny's local product retrieval layer.
+// DESIGN PRINCIPLE (this is the whole point of the rewire):
 //
-// This is intentionally dependency-free. It searches the synced Shopify catalog
-// in memory before Benny talks to the AI, so product recommendations come from
-// Victory's real catalog instead of from the model's memory.
+//   This file's job is RECALL, not JUDGMENT.
+//
+//   It casts a wide net and hands the model a generous set of REAL products.
+//   It does NOT decide "this is a mic stand, not a microphone" — that is
+//   judgment, and judgment belongs to the model, which actually understands
+//   what things are. The old code tried to encode understanding in keyword
+//   lists and got it wrong constantly.
+//
+//   So: we retrieve broadly and let intelligence sort. The only hard rule is
+//   that every candidate is a real row from the catalog.
 
-import { getAllProducts } from "./catalog.js";
-import { findTaxonomyCategory, phraseInText } from "./taxonomy.js";
+import { getAllProducts, getByHandle } from "./catalog.js";
 
-const STOPWORDS = new Set([
-  "a", "an", "and", "are", "as", "at", "be", "best", "but", "by", "can", "do",
-  "does", "for", "from", "get", "good", "have", "i", "in", "is", "it", "me",
-  "my", "need", "of", "on", "or", "our", "please", "recommend", "show", "that",
-  "the", "this", "to", "want", "we", "what", "which", "with", "you"
+function norm(s = "") {
+  return String(s).toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+const STOP = new Set([
+  "the","a","an","and","or","for","with","of","to","in","on","at","is","are",
+  "i","we","you","my","our","need","want","looking","some","any","do","does",
+  "have","has","can","could","would","please","me","it","that","this","best",
+  "good","cheap","new","help","find","show","get","buy","sell","carry","stock"
 ]);
 
-const ACCESSORY_TERMS = [
-  "case", "cases", "gig bag", "bag", "bags", "cable", "cables", "adapter", "adapters",
-  "stand", "stands", "mount", "mounts", "bracket", "mouthpiece", "mouthpieces",
-  "ligature", "reed", "reeds", "cleaning kit", "cleaning cloth", "valve oil",
-  "slide grease", "rosin", "strap", "straps", "mute", "mutes", "power supply",
-  "charger", "battery", "shock mount", "pop filter", "windscreen", "picks",
-  "capo", "sticks", "pedal", "bench", "throne", "bow"
-];
-
-// Use-case terms are not fake products. They only help rank real catalog items
-// that already exist. This helps questions like "mic for tuba in Mexican banda"
-// find clip-on / instrument / high-SPL microphones without hard-coding a SKU.
-const USE_CASE_BOOSTS = [
-  {
-    when: ["tuba", "mic"],
-    boostTerms: ["clip", "clip on", "clip-on", "instrument", "brass", "horn", "gooseneck", "dynamic", "wireless", "bodypack", "high spl"]
-  },
-  {
-    when: ["tuba", "microphone"],
-    boostTerms: ["clip", "clip on", "clip-on", "instrument", "brass", "horn", "gooseneck", "dynamic", "wireless", "bodypack", "high spl"]
-  },
-  {
-    when: ["sax", "mic"],
-    boostTerms: ["clip", "clip on", "clip-on", "instrument", "horn", "gooseneck", "wireless", "bodypack"]
-  },
-  {
-    when: ["trumpet", "mic"],
-    boostTerms: ["clip", "clip on", "clip-on", "instrument", "brass", "horn", "gooseneck", "dynamic", "wireless", "bodypack", "high spl"]
-  },
-  {
-    when: ["church", "speaker"],
-    boostTerms: ["loudspeaker", "powered", "active", "pa", "subwoofer", "line array", "column"]
-  },
-  {
-    when: ["church", "camera"],
-    boostTerms: ["ptz", "streaming", "broadcast", "ndi", "sdi", "hdmi"]
-  },
-  {
-    when: ["record", "drums"],
-    boostTerms: ["interface", "preamp", "8 channel", "adat", "thunderbolt", "usb"]
-  }
-];
-
-function normalize(value = "") {
-  return String(value)
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+function tokens(s = "") {
+  return norm(s).split(" ").filter(t => t.length >= 2 && !STOP.has(t));
 }
 
-function compact(value = "") {
-  return normalize(value).replace(/ /g, "");
-}
+// Score how well a product matches the query terms.
+// Higher = better. This orders candidates; it does not filter them out.
+function scoreProduct(product, queryTokens) {
+  if (!queryTokens.length) return 0;
 
-function tokens(value = "") {
-  return normalize(value)
-    .split(" ")
-    .filter(token => token.length >= 2 && !STOPWORDS.has(token));
-}
-
-function unique(values = []) {
-  return [...new Set(values.filter(Boolean))];
-}
-
-function productVariantText(product = {}) {
-  return (product.variants || [])
-    .flatMap(variant => [
-      variant.title,
-      variant.sku,
-      ...(variant.selectedOptions || []).flatMap(option => [option.name, option.value])
-    ])
-    .filter(Boolean)
-    .join(" ");
-}
-
-function productOptionText(product = {}) {
-  return (product.options || [])
-    .flatMap(option => [option.name, ...(option.values || [])])
-    .filter(Boolean)
-    .join(" ");
-}
-
-function productHaystack(product = {}) {
-  return [
-    product.title,
-    product.vendor,
-    product.productType,
-    product.description,
-    ...(product.tags || []),
-    ...(product.collections || []),
-    ...(product.collectionTitles || []),
-    product.sku,
-    productVariantText(product),
-    productOptionText(product)
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
-function productIsLikelyAccessory(product = {}) {
-  const title = normalize(product.title || "");
-  const type = normalize(product.productType || "");
-  return ACCESSORY_TERMS.some(term => phraseInText(title, term) || phraseInText(type, term));
-}
-
-function requestIsForAccessory(requestedItem = {}, taxonomy = null) {
-  if (taxonomy?.isAccessoryCategory) return true;
-  const text = [requestedItem.product, requestedItem.category, requestedItem.searchQuery]
-    .filter(Boolean)
-    .join(" ");
-  return ACCESSORY_TERMS.some(term => phraseInText(text, term));
-}
-
-function queryTextFromGroup(queryGroup = {}) {
-  const item = queryGroup.requestedItem || {};
-  return unique([
-    item.brand,
-    item.product,
-    item.category,
-    item.searchQuery,
-    queryGroup.taxonomyCategory,
-    ...(queryGroup.searchQueries || [])
-  ]).join(" ");
-}
-
-function getUseCaseBoostTerms(queryText = "") {
-  const normalized = normalize(queryText);
-  const terms = [];
-
-  for (const rule of USE_CASE_BOOSTS) {
-    const matched = rule.when.every(term => phraseInText(normalized, term));
-    if (matched) terms.push(...rule.boostTerms);
-  }
-
-  return unique(terms);
-}
-
-function variantSkuMatch(product = {}, normalizedQuery = "", compactQuery = "") {
-  for (const variant of product.variants || []) {
-    const sku = normalize(variant.sku || "");
-    if (!sku) continue;
-    if (sku === normalizedQuery || compact(sku) === compactQuery) return true;
-  }
-
-  const productSku = normalize(product.sku || "");
-  return Boolean(productSku && (productSku === normalizedQuery || compact(productSku) === compactQuery));
-}
-
-export function scoreCatalogProduct(product = {}, queryGroup = {}) {
-  const requestedItem = queryGroup.requestedItem || {};
-  const rawQueryText = queryTextFromGroup(queryGroup);
-  const normalizedQuery = normalize(rawQueryText);
-  const compactQuery = compact(rawQueryText);
-  const taxonomy =
-    findTaxonomyCategory(rawQueryText) ||
-    (queryGroup.taxonomyCategory ? findTaxonomyCategory(queryGroup.taxonomyCategory) : null);
-
-  const title = normalize(product.title || "");
-  const vendor = normalize(product.vendor || "");
-  const type = normalize(product.productType || "");
-  const handle = normalize(product.handle || "");
-  const haystack = normalize(productHaystack(product));
+  const title = norm(product.title);
+  const vendor = norm(product.vendor);
+  const type = norm(product.productType);
+  const tagText = norm((product.tags || []).join(" "));
+  const collText = norm((product.collections || []).join(" "));
+  const desc = norm(product.description || "");
 
   let score = 0;
-  const reasons = [];
 
-  if (!normalizedQuery || !haystack) return { score: 0, reasons };
+  for (const t of queryTokens) {
+    // Vendor/brand match is a strong signal.
+    if (vendor.includes(t)) score += 30;
 
-  // Exact identifiers should dominate everything.
-  if (handle && (handle === normalizedQuery || compact(handle) === compactQuery)) {
-    score += 1000;
-    reasons.push("exact handle");
+    // Product type is the most reliable field in this catalog (98% coverage)
+    // and it's how "Microphone" vs "Microphone Stand" is distinguished.
+    if (type.includes(t)) score += 25;
+
+    if (title.includes(t)) score += 20;
+    if (collText.includes(t)) score += 10;
+    if (tagText.includes(t)) score += 8;
+    if (desc.includes(t)) score += 3;
   }
 
-  if (variantSkuMatch(product, normalizedQuery, compactQuery)) {
-    score += 950;
-    reasons.push("exact SKU");
-  }
+  // Exact-ish title match bonus (e.g. a specific model number).
+  const joined = queryTokens.join(" ");
+  if (joined && title.includes(joined)) score += 40;
 
-  // Direct phrase matches.
-  const directPhrases = unique([
-    requestedItem.searchQuery,
-    requestedItem.product,
-    [requestedItem.brand, requestedItem.product].filter(Boolean).join(" ")
-  ]).map(normalize).filter(Boolean);
+  // Prefer sellable products, but never exclude drafts — Benny should know
+  // they exist. This is a nudge, not a gate.
+  if (product.sellable) score += 5;
+  if (product.available) score += 2;
 
-  for (const phrase of directPhrases) {
-    if (!phrase || phrase.length < 2) continue;
-    if (title === phrase) {
-      score += 350;
-      reasons.push(`title exact: ${phrase}`);
-    } else if (phraseInText(title, phrase)) {
-      score += 180;
-      reasons.push(`title phrase: ${phrase}`);
-    } else if (phraseInText(haystack, phrase)) {
-      score += 60;
-      reasons.push(`catalog phrase: ${phrase}`);
-    }
-  }
-
-  // Brand/vendor match.
-  if (requestedItem.brand) {
-    const brand = normalize(requestedItem.brand);
-    if (brand && (phraseInText(vendor, brand) || phraseInText(title, brand))) {
-      score += 90;
-      reasons.push("brand match");
-    }
-  }
-
-  // Category/taxonomy match.
-  if (taxonomy) {
-    if (taxonomy.collectionHandle && (product.collections || []).includes(taxonomy.collectionHandle)) {
-      score += 120;
-      reasons.push("collection match");
-    }
-
-    const hints = unique([
-      taxonomy.canonicalCategory,
-      ...(taxonomy.aliases || []),
-      ...(taxonomy.productTypeHints || [])
-    ]).map(normalize).filter(Boolean);
-
-    for (const hint of hints) {
-      if (phraseInText(type, hint)) {
-        score += 80;
-        reasons.push(`type match: ${hint}`);
-        break;
-      }
-      if (phraseInText(title, hint)) {
-        score += 65;
-        reasons.push(`title category: ${hint}`);
-        break;
-      }
-    }
-
-    if (!reasons.some(reason => reason.includes("type match") || reason.includes("title category"))) {
-      for (const hint of hints.slice(0, 12)) {
-        if (phraseInText(haystack, hint)) {
-          score += 25;
-          reasons.push(`catalog category: ${hint}`);
-          break;
-        }
-      }
-    }
-  }
-
-  // Token match. This gives broad search recall without letting random tiny words win.
-  const queryTokens = unique(tokens(rawQueryText));
-  let titleHits = 0;
-  let typeHits = 0;
-  let vendorHits = 0;
-  let fullHits = 0;
-
-  for (const token of queryTokens) {
-    if (phraseInText(title, token)) titleHits += 1;
-    if (phraseInText(type, token)) typeHits += 1;
-    if (phraseInText(vendor, token)) vendorHits += 1;
-    if (phraseInText(haystack, token)) fullHits += 1;
-  }
-
-  score += Math.min(titleHits * 18, 90);
-  score += Math.min(typeHits * 16, 64);
-  score += Math.min(vendorHits * 14, 56);
-  score += Math.min(fullHits * 4, 48);
-
-  if (titleHits || typeHits || vendorHits || fullHits) {
-    reasons.push(`token hits t:${titleHits} ty:${typeHits} v:${vendorHits} f:${fullHits}`);
-  }
-
-  // Practical use-case boost, still tied to actual catalog text.
-  for (const boostTerm of getUseCaseBoostTerms(rawQueryText)) {
-    if (phraseInText(haystack, boostTerm)) {
-      score += 18;
-      reasons.push(`use-case: ${boostTerm}`);
-    }
-  }
-
-  // If the customer wants a main product, do not let accessories win just because
-  // the search contains words like "mic" or "cable". If they asked for an accessory,
-  // this penalty is removed.
-  const wantsAccessory = requestIsForAccessory(requestedItem, taxonomy);
-  if (!wantsAccessory && productIsLikelyAccessory(product)) {
-    score -= 80;
-    reasons.push("accessory demotion");
-  }
-
-  if (product.available === true || product.primaryVariant?.availableForSale === true) score += 5;
-  if (product.isOnSale) score += 2;
-
-  return { score, reasons: reasons.slice(0, 8) };
+  return score;
 }
 
-export function searchCatalogForQueryGroup(queryGroup = {}, { limit = 80, minScore = 20 } = {}) {
-  const catalog = getAllProducts();
-  if (!catalog.length) return [];
+/**
+ * Search the catalog. Returns REAL products only, ranked, never invented.
+ *
+ * @param {string} query        free text, e.g. "jbl powered speaker"
+ * @param {object} opts
+ *   limit          max results (default 12)
+ *   includeDrafts  include non-sellable products (default true)
+ */
+export function searchCatalog(query, opts = {}) {
+  const { limit = 12, includeDrafts = true } = opts;
+  const qTokens = tokens(query);
+  if (!qTokens.length) return [];
 
-  return catalog
-    .map(product => {
-      const result = scoreCatalogProduct(product, queryGroup);
-      return {
-        ...product,
-        catalogSearch: result
-      };
-    })
-    .filter(product => product.catalogSearch.score >= minScore)
-    .sort((a, b) => b.catalogSearch.score - a.catalogSearch.score)
+  const all = getAllProducts();
+  const scored = [];
+
+  for (const p of all) {
+    if (!includeDrafts && !p.sellable) continue;
+    const score = scoreProduct(p, qTokens);
+    if (score > 0) scored.push({ product: p, score });
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit).map(s => s.product);
+}
+
+/** Find products by brand/vendor name. Used for "do you carry X brand?" */
+export function findByVendor(vendorQuery, limit = 20) {
+  const q = norm(vendorQuery);
+  if (!q) return [];
+  return getAllProducts()
+    .filter(p => norm(p.vendor).includes(q))
+    .sort((a, b) => (b.sellable ? 1 : 0) - (a.sellable ? 1 : 0))
     .slice(0, limit);
 }
 
-export function searchCatalogProducts(queryGroups = [], { limitPerGroup = 80, minScore = 20 } = {}) {
-  return queryGroups.map(queryGroup => ({
-    requestedItem: queryGroup.requestedItem,
-    taxonomyCategory: queryGroup.taxonomyCategory,
-    collectionHandle: queryGroup.collectionHandle,
-    source: "local_catalog",
-    products: searchCatalogForQueryGroup(queryGroup, { limit: limitPerGroup, minScore })
-  }));
+/**
+ * The COMPLETE, authoritative list of brands we carry in a category.
+ * This is what kills "we only carry Kurzweil pianos" — it's a real count
+ * over the whole catalog, not a guess from whatever a text search returned.
+ */
+export function listVendorsMatching(query, limit = 40) {
+  const qTokens = tokens(query);
+  const counts = new Map();
+
+  for (const p of getAllProducts()) {
+    const hay = norm([p.productType, p.title, (p.collections || []).join(" "), (p.tags || []).join(" ")].join(" "));
+    const hit = qTokens.length === 0 || qTokens.some(t => hay.includes(t));
+    if (!hit || !p.vendor) continue;
+
+    const key = p.vendor;
+    const entry = counts.get(key) || { vendor: key, active: 0, draft: 0 };
+    if (p.sellable) entry.active += 1;
+    else entry.draft += 1;
+    counts.set(key, entry);
+  }
+
+  return [...counts.values()]
+    .sort((a, b) => (b.active + b.draft) - (a.active + a.draft))
+    .slice(0, limit);
+}
+
+/** Exact lookup by handle — used when a customer pastes a product link. */
+export function findByHandle(handle) {
+  return getByHandle(handle) || null;
+}
+
+/** Extract product handles from any victorymusical.com links in text. */
+export function extractHandlesFromText(text = "") {
+  return [
+    ...new Set(
+      [...String(text).matchAll(/\/products\/([a-z0-9][a-z0-9\-_]*)/gi)].map(m => m[1].toLowerCase())
+    )
+  ];
+}
+
+/**
+ * Trim a product to what the model and the product cards need.
+ * Draft products carry no price and no cart link — structurally unsellable.
+ */
+export function slim(product) {
+  if (!product) return null;
+  return {
+    handle: product.handle,
+    title: product.title,
+    vendor: product.vendor,
+    productType: product.productType,
+    status: product.status,              // "active" | "draft"
+    sellable: product.sellable,          // true only if we can sell it today
+    price: product.price,
+    priceAmount: product.priceAmount,
+    compareAtPriceAmount: product.compareAtPriceAmount,
+    currencyCode: product.currencyCode,
+    isOnSale: product.isOnSale,
+    available: product.available,
+    url: product.url,
+    image: product.image,
+    addToCartUrl: product.addToCartUrl,
+    sku: product.sku
+  };
 }
