@@ -148,7 +148,7 @@ export async function executeTool(name, args) {
   try {
     switch (name) {
       case "search_catalog": {
-        const limit = Math.min(Math.max(Number(args.limit) || 12, 1), 40);
+        const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 40);
         const sellableOnly = args.sellable_only !== false;
         const results = searchCatalog(args.query, {
           limit,
@@ -157,14 +157,26 @@ export async function executeTool(name, args) {
 
         const withOptions = results.filter(p => p.hasVariants).length;
 
+        // Brand distribution — AWARENESS, not a cap. Nothing is hidden; Benny
+        // simply SEES the range so one keyword-rich brand can't feel like the
+        // whole store.
+        const brandCounts = {};
+        for (const p of results) {
+          if (p.vendor) brandCounts[p.vendor] = (brandCounts[p.vendor] || 0) + 1;
+        }
+
         return {
           your_spec: args.spec,
           query_used: args.query,
           found: results.length,
+          brands_in_these_results: brandCounts,
           products: results,
           HOW_TO_USE_THIS: [
             "These matched WORDS in titles/types. They are CANDIDATES, not answers.",
             "Judge each against YOUR spec above. Reject anything that doesn't fit.",
+            "Check brands_in_these_results: if one brand dominates, that reflects title " +
+              "wording, not our range. Consider showing the customer more than one brand, " +
+              "and offer to look at other brands.",
             "NEVER offer the wrong instrument. If they asked for ALTO, a BARITONE reed is WRONG — " +
               "it is not 'suitable', it is a different instrument. Do not substitute.",
             "NEVER offer the wrong BRAND. If the customer asked for Hosa, do not say 'yes we carry " +

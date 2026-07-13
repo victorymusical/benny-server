@@ -31,7 +31,11 @@ function tokens(s = "") {
 }
 
 // Score how well a product matches the query terms.
-// Higher = better. This orders candidates; it does not filter them out.
+// productType DOMINATES. Titles are marketing copy — some brands stuff them
+// with keywords ("Plug & Play Wireless Microphone System") while others don't
+// ("BLX288/PG58 Dual Vocal System"). Scoring titles highest let keyword-rich
+// brands monopolize every result list. productType is the catalog's honest
+// signal of what a thing IS, and it's 88%+ populated.
 function scoreProduct(product, queryTokens) {
   if (!queryTokens.length) return 0;
 
@@ -45,25 +49,28 @@ function scoreProduct(product, queryTokens) {
   let score = 0;
 
   for (const t of queryTokens) {
-    // Vendor/brand match is a strong signal.
+    // What the product IS — the strongest signal by far.
+    if (type.includes(t)) score += 40;
+
+    // Brand match — strong, for "JBL speaker" style queries.
     if (vendor.includes(t)) score += 30;
 
-    // Product type is the most reliable field in this catalog (98% coverage)
-    // and it's how "Microphone" vs "Microphone Stand" is distinguished.
-    if (type.includes(t)) score += 25;
+    // Collections/tags — curated, fairly honest.
+    if (collText.includes(t)) score += 12;
+    if (tagText.includes(t)) score += 10;
 
-    if (title.includes(t)) score += 20;
-    if (collText.includes(t)) score += 10;
-    if (tagText.includes(t)) score += 8;
-    if (desc.includes(t)) score += 3;
+    // Title — deliberately weak now. Marketing copy, keyword-stuffable.
+    if (title.includes(t)) score += 8;
+
+    if (desc.includes(t)) score += 2;
   }
 
-  // Exact-ish title match bonus (e.g. a specific model number).
+  // Exact model-number style match in the title still matters a lot
+  // ("BLX288", "WMS40") — that's a customer naming a specific product.
   const joined = queryTokens.join(" ");
-  if (joined && title.includes(joined)) score += 40;
+  if (joined && title.includes(joined)) score += 35;
 
-  // Prefer sellable products, but never exclude drafts — Benny should know
-  // they exist. This is a nudge, not a gate.
+  // Nudges, not gates.
   if (product.sellable) score += 5;
   if (product.available) score += 2;
 
