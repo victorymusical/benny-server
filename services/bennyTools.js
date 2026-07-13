@@ -1,18 +1,21 @@
-// bennyTools.js — the tools Benny can call himself.
+// bennyTools.js
 //
-// THE ARCHITECTURAL CHANGE:
+// THE CORE FIX:
 //
-//   Before: the server picked queries, capped results at 20, and handed Benny
-//           a pile. Benny was a passenger. A passenger with a 20-item pile is
-//           always dumber than a driver with a search box.
+// Benny must COMMIT to what the customer needs BEFORE he is allowed to see
+// what's available.
 //
-//   Now:    Benny gets a DOOR into all 5,244 products and opens it as often as
-//           he likes, with whatever queries HE decides are right.
+// Every failure we've had is the same bug: he searches, gets a list, and the
+// list becomes the answer. He selects from a menu instead of deciding what's
+// needed. That's how a church asking for a "mixer" got a video switcher, and
+// how "vocal microphone" would get a USB podcast condenser.
 //
-// This is why no cap is needed: he isn't handed a list, he queries the catalog.
-// And it's why almost no rules are needed: he searches per-role naturally,
-// because searching IS what designing a system looks like. We don't have to
-// force him to design. He designs in order to know what to search for.
+// So search_catalog now REQUIRES a `spec` — Benny must state what he's actually
+// looking for and why, in his own words, before the tool returns anything.
+// Once he's written "handheld dynamic cardioid mic for live worship vocals,"
+// the USB condenser can't win — he already decided what he was looking for.
+//
+// This doesn't limit his intelligence. It's what forces him to USE it.
 
 import {
   searchCatalog,
@@ -24,41 +27,45 @@ import {
 import { searchLiveSite } from "./siteVerify.js";
 import { getCatalogCount, getActiveCount, getDraftCount } from "./catalog.js";
 
-/* ---------------- TOOL DEFINITIONS (sent to OpenAI) ---------------- */
-
 export const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
       name: "search_catalog",
       description:
-        "Search Victory's real product catalog. Use this EVERY time you need a product. " +
-        "Call it as many times as you need — once per role, per category, per brand. " +
-        "Designing a church sound system? Search 'powered PA speaker', then 'live mixer', " +
-        "then 'speaker stand', then 'vocal microphone', then 'XLR cable' — separate searches. " +
-        "This is the ONLY way to find real products. Never name a product you haven't found here.",
+        "Search Victory's real catalog. This is the ONLY way to find products you can sell.\n\n" +
+        "BEFORE you search, you must decide what the customer actually NEEDS — not just what " +
+        "word they used. Fill in `spec` with the real requirement, in your own words, as a " +
+        "working audio professional would state it.\n\n" +
+        "Examples of thinking BEFORE searching:\n" +
+        "  Customer says 'vocal mic for church' → spec: 'Handheld dynamic cardioid mic for live " +
+        "worship vocals. Must reject room noise and stage wedges. NOT a USB podcast mic, NOT a " +
+        "studio condenser.'\n" +
+        "  Customer says 'mixer for church' → spec: 'Live-sound audio mixing console for mics and " +
+        "instruments feeding a PA. NOT a video switcher, NOT a studio recording interface.'\n" +
+        "  Customer says 'speakers for 200 seats' → spec: 'Powered full-range PA loudspeakers " +
+        "sized for a 200-seat room. NOT desktop studio monitors.'\n\n" +
+        "Then judge the results against your own spec. Anything that doesn't meet it, reject.",
       parameters: {
         type: "object",
         properties: {
-          query: {
+          spec: {
             type: "string",
             description:
-              "What to search for. Use the words a product would actually be titled or typed with, " +
-              "e.g. 'powered PA speaker', 'digital mixer 16 channel', 'dynamic vocal microphone', " +
-              "'speaker stand', 'XLR cable', 'JBL loudspeaker'."
+              "REQUIRED. What the customer actually needs, and explicitly what would NOT qualify. " +
+              "Write this BEFORE you look at any products. This is your commitment."
           },
-          limit: {
-            type: "integer",
-            description: "How many results (default 10, max 40). Use more when comparing options."
+          query: {
+            type: "string",
+            description: "Search words likely to appear in a product's title or type."
           },
+          limit: { type: "integer", description: "Results to return (default 12, max 40)." },
           sellable_only: {
             type: "boolean",
-            description:
-              "Default true. Set false to also see products we have in our system but cannot " +
-              "sell today (drafts) — useful to tell a customer 'we may be able to source that'."
+            description: "Default true. False also shows products we can't sell today (drafts)."
           }
         },
-        required: ["query"]
+        required: ["spec", "query"]
       }
     }
   },
@@ -67,13 +74,13 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: "search_by_brand",
       description:
-        "Find products from a specific brand. Use when the customer names a brand, or to check " +
-        "whether Victory actually carries a brand before you ever say we don't.",
+        "Find products from a brand. Use when the customer names one, or to check whether Victory " +
+        "carries a brand before you ever suggest we don't.",
       parameters: {
         type: "object",
         properties: {
-          brand: { type: "string", description: "Brand name, e.g. 'HK Audio', 'JBL', 'Shure'." },
-          limit: { type: "integer", description: "How many results (default 20)." }
+          brand: { type: "string" },
+          limit: { type: "integer" }
         },
         required: ["brand"]
       }
@@ -84,16 +91,11 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: "list_brands_in_category",
       description:
-        "Get the COMPLETE list of brands Victory carries in a category, counted from the real " +
-        "catalog. Use this for 'what brands do you carry' questions. Never guess at a brand list.",
+        "Complete list of brands Victory carries in a category, counted from the real catalog. " +
+        "Use for 'what brands do you carry'. Never guess a brand list.",
       parameters: {
         type: "object",
-        properties: {
-          category: {
-            type: "string",
-            description: "e.g. 'piano', 'microphone', 'speaker', 'guitar', 'drum'."
-          }
-        },
+        properties: { category: { type: "string" } },
         required: ["category"]
       }
     }
@@ -102,14 +104,10 @@ export const TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "get_product_by_handle",
-      description:
-        "Look up one exact product by its handle. Use when a customer pastes a victorymusical.com " +
-        "product link — the handle is the last part of the URL.",
+      description: "Look up one exact product by handle. Use when a customer pastes a product link.",
       parameters: {
         type: "object",
-        properties: {
-          handle: { type: "string", description: "e.g. 'vivace-pro'" }
-        },
+        properties: { handle: { type: "string" } },
         required: ["handle"]
       }
     }
@@ -119,28 +117,24 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: "check_live_website",
       description:
-        "Search the live victorymusical.com website directly. This is a SECOND OPINION. " +
-        "You MUST call this before ever telling a customer you cannot find something. " +
-        "The catalog can be out of date; the live site is the truth. Only after BOTH come up " +
-        "empty may you say you're not seeing it.",
+        "Search the live victorymusical.com site. INFORMATION ONLY — results from this tool can " +
+        "NEVER be sold, priced, or put in a cart. Use it before telling a customer you can't find " +
+        "something, in case the catalog is stale. If it finds something, say the team will confirm " +
+        "availability and fit — do not offer to sell it.",
       parameters: {
         type: "object",
-        properties: {
-          query: { type: "string", description: "Product or brand to look for on the live site." }
-        },
+        properties: { query: { type: "string" } },
         required: ["query"]
       }
     }
   }
 ];
 
-/* ---------------- TOOL EXECUTION ---------------- */
-
 export async function executeTool(name, args) {
   try {
     switch (name) {
       case "search_catalog": {
-        const limit = Math.min(Math.max(Number(args.limit) || 10, 1), 40);
+        const limit = Math.min(Math.max(Number(args.limit) || 12, 1), 40);
         const sellableOnly = args.sellable_only !== false;
         const results = searchCatalog(args.query, {
           limit,
@@ -148,11 +142,17 @@ export async function executeTool(name, args) {
         }).map(slim);
 
         return {
+          your_spec: args.spec,
           query: args.query,
           found: results.length,
           products: results,
+          REMINDER:
+            "These matched WORDS, not your spec. Read your own spec above and reject anything " +
+            "that doesn't meet it. A product being in this list does NOT mean it's right. " +
+            "If nothing here genuinely meets your spec, recommend NOTHING and hand this role to " +
+            "the Victory team.",
           note: results.length === 0
-            ? "No catalog match. Try different words, or call check_live_website before saying we don't have it."
+            ? "Nothing found. Call check_live_website before saying we don't have it."
             : undefined
         };
       }
@@ -165,18 +165,17 @@ export async function executeTool(name, args) {
           found: results.length,
           products: results,
           note: results.length === 0
-            ? `No products found for "${args.brand}" in the catalog. Call check_live_website before saying we don't carry it.`
+            ? `No catalog products for "${args.brand}". Call check_live_website before saying we don't carry it.`
             : undefined
         };
       }
 
       case "list_brands_in_category": {
-        const brands = listVendorsMatching(args.category, 40);
         return {
           category: args.category,
-          brands,
-          note: "'active' = sellable now. 'draft' = in our system but not sellable today. " +
-                "This list is complete for the catalog, but never tell a customer a brand is the ONLY one we carry."
+          brands: listVendorsMatching(args.category, 40),
+          note: "'active' = sellable. 'draft' = in our system, not sellable today. " +
+                "Never tell a customer a brand is the ONLY one we carry."
         };
       }
 
@@ -184,7 +183,7 @@ export async function executeTool(name, args) {
         const p = findByHandle(args.handle);
         return p
           ? { found: true, product: slim(p) }
-          : { found: false, note: "Not in the catalog. Try check_live_website." };
+          : { found: false, note: "Not in catalog. Try check_live_website." };
       }
 
       case "check_live_website": {
@@ -192,12 +191,17 @@ export async function executeTool(name, args) {
         return {
           query: args.query,
           found_on_live_site: results.length > 0,
-          results,
-          note: results.length > 0
-            ? "These exist on the live site but weren't in the catalog — the catalog may be stale. " +
-              "Acknowledge they exist and offer to connect the customer with the team to confirm."
-            : "Neither the catalog nor the live site has this. You may now honestly say you're not " +
-              "seeing it — but NEVER say 'we don't sell it', and NEVER refer them to another retailer."
+          // Deliberately NOT called "products" — these can never become cards.
+          live_site_results: results,
+          CRITICAL:
+            "INFORMATION ONLY. These are NOT sellable products. You may NOT put these in your " +
+            "products list, quote their prices, or offer a cart for them. They have not been " +
+            "verified for stock, price, or fit.",
+          what_to_say: results.length > 0
+            ? "Acknowledge you're seeing something similar on the site, and that the team will " +
+              "confirm the exact fit and availability. Do NOT sell it."
+            : "Neither the catalog nor the live site has this. You may now say you're not seeing " +
+              "it — but NEVER say 'we don't sell it', and NEVER refer them to another retailer."
         };
       }
 
