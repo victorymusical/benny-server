@@ -114,7 +114,7 @@ function mapAdminNode(node) {
     vendor: node.vendor || "",
     productType: node.productType || "",
     tags: node.tags || [],
-    description: (node.description || "").slice(0, 400),
+    description: (node.description || "").slice(0, 1000),
     collections: (node.collections?.edges || []).map(e => e.node.handle),
 
     status: isDraft ? "draft" : "active",
@@ -220,7 +220,7 @@ function mapStorefrontNode(node) {
     vendor: node.vendor || "",
     productType: node.productType || "",
     tags: node.tags || [],
-    description: (node.description || "").slice(0, 400),
+    description: (node.description || "").slice(0, 1000),
     collections: (node.collections?.edges || []).map(e => e.node.handle),
     status: "active",
     sellable: true,

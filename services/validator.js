@@ -56,11 +56,25 @@ rejecting on missing paperwork strands a customer who could have been served.
 Both are failures. Judge like a knowledgeable colleague, not a compliance
 officer.
 
-Judge by what the product IS (its type, its nature), not by how its title is
-worded. A "Live Streaming Mixer (HDMI)" is a video switcher regardless of the
-word "mixer". A desktop mic stand is not a floor stand. A baritone reed is not
-an alto reed. An entry fixed-frequency wireless system is not a congested-RF
-solution.
+Judge by what the product IS (its type, its nature, its DESCRIPTION), not by
+how its title is worded. A "Live Streaming Mixer (HDMI)" is a video switcher
+regardless of the word "mixer". A desktop mic stand is not a floor stand. A
+baritone reed is not an alto reed. An entry fixed-frequency wireless system is
+not a congested-RF solution.
+
+COMPONENT PROTECTION: when the customer needs a complete working solution, a
+COMPONENT cannot be accepted as that solution. Capsule heads, replacement
+heads, transmitter-only, receiver-only, mounts, adapters, cables, and
+accessories are components. Reject them for a complete-system role (reason:
+"component, not a complete system") unless the customer specifically asked for
+that component. Description phrases like "for ... transmitters", "replacement",
+"capsule", "receiver sold separately", "requires ..." are component evidence.
+
+DO NOT INFER FIT FROM CATEGORY ADJACENCY:
+- microphone-related does not mean it fits an instrument-microphone role
+- wireless-related does not mean it is a complete wireless system
+- sax-related does not mean it fits every saxophone (soprano ≠ alto ≠ tenor)
+- a "head" or "capsule" is not a complete microphone
 
 Return ONLY JSON, no fences:
 {
@@ -83,17 +97,26 @@ function parseJSON(raw) {
 }
 
 // Trim candidates to what fit-judgment needs. No cart URLs, no images —
-// the validator judges fit, it doesn't sell.
+// the validator judges fit, it doesn't sell. The DESCRIPTION is essential:
+// it's where a product admits what it actually is ("capsule head for RE3
+// handheld transmitters"), which the title never says.
 function forJudgment(p) {
   return {
     handle: p.handle,
     title: p.title,
     brand: p.vendor,
     productType: p.productType,
+    description: (p.description || "").slice(0, 900),
     price: p.priceAmount,
     options: (p.options || []).map(o => `${o.name}: ${(o.values || []).join("/")}`)
   };
 }
+
+// The validator only runs on consultative turns with a small payload, so a
+// stronger model here is cheap - and fit judgment is exactly where deeper
+// product knowledge pays (knowing an "RC3 wireless head" is a handheld
+// capsule, not a headset). Override with BENNY_VALIDATOR_MODEL if needed.
+const VALIDATOR_MODEL = process.env.BENNY_VALIDATOR_MODEL || "gpt-4.1";
 
 export async function validateFit(assessment, customerText, candidates) {
   if (!candidates || !candidates.length) return { verdicts: new Map(), validated: true };
@@ -109,7 +132,7 @@ export async function validateFit(assessment, customerText, candidates) {
     };
 
     const response = await client.chat.completions.create({
-      model: "gpt-4.1-mini",
+      model: VALIDATOR_MODEL,
       temperature: 0,
       max_tokens: 900,
       messages: [
