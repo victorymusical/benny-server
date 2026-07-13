@@ -4,20 +4,38 @@ import fs from "fs";
 import path from "path";
 import { TOOL_DEFINITIONS, executeTool, getCatalogStats } from "../services/bennyTools.js";
 import { findByHandle, slim } from "../services/catalogSearch.js";
+import { runAssessment } from "../services/assessment.js";
+import { validateFit } from "../services/validator.js";
 
 const router = express.Router();
 
 const PHONE = "844-687-4208";
 const EMAIL = "sales@victorymusical.com";
 
-/* ---------------- KNOWLEDGE (follows the customer) ---------------- */
+/* =====================================================================
+   THE PIPELINE:  ASSESS -> (DISCOVER) -> SEARCH -> VALIDATE -> SELL
+
+   Stage 1 ASSESS   (assessment.js, no tools): understand the situation
+                    like a professional. Decides the turn's mode.
+   Stage 2 DISCOVER (no tools, no catalog): if a key detail is missing,
+                    the assessment's reply IS the answer. One fast call.
+   Stage 3 SEARCH   (agent loop with tools): searches per the assessment's
+                    strategy. Proposes candidate products + drafts a reply.
+   Stage 4 VALIDATE (validator.js, separate call, no sales context):
+                    verdict per candidate. SERVER ENFORCES the verdict.
+   Stage 5 SELL     If everything passed: ship. If anything was rejected:
+                    ONE repair call rewrites the reply without the rejected
+                    products, using Melvin's handoff language for gaps.
+
+   Benny can search freely. Benny can think freely.
+   Benny is not allowed to SELL freely. Only validated products render.
+   ===================================================================== */
+
+/* ---------------- KNOWLEDGE (agent stage only) ---------------- */
 
 function loadFile(f) {
-  try {
-    return fs.readFileSync(path.join(process.cwd(), "knowledge", f), "utf8");
-  } catch {
-    return "";
-  }
+  try { return fs.readFileSync(path.join(process.cwd(), "knowledge", f), "utf8"); }
+  catch { return ""; }
 }
 
 const CORE = ["sales-methodology.md", "conversational-rules.md", "greeting-rules.md"];
@@ -32,7 +50,7 @@ const TOPICS = [
   { k: ["bass guitar", "electric bass"], f: ["bass-guitars.md"] },
   { k: ["guitar"], f: ["guitars.md"] },
   { k: ["keyboard", "piano", "synth"], f: ["keys-and-synths.md"] },
-  { k: ["drum", "percussion", "cymbal", "conga"], f: ["drums.md", "percussion.md"] },
+  { k: ["drum", "percussion", "cymbal", "conga", "timbale"], f: ["drums.md", "percussion.md"] },
   { k: ["violin", "viola", "cello"], f: ["orchestral-strings.md"] },
   { k: ["microphone", "mic", "wireless"], f: ["microphones.md"] },
   { k: ["interface", "apollo", "volt", "preamp"], f: ["audio-interfaces.md", "studio-workflows.md"] },
@@ -46,296 +64,241 @@ const TOPICS = [
   { k: ["financ", "payment", "monthly", "lease"], f: ["financing-rules.md", "financing-and-sales.md"] }
 ];
 
-function matchTopics(text) {
-  const hay = " " + String(text).toLowerCase() + " ";
-  const out = new Set();
-  for (const t of TOPICS) if (t.k.some(k => hay.includes(k))) t.f.forEach(f => out.add(f));
-  return out;
-}
-
 function loadKnowledge(messages) {
   const users = messages.filter(m => m.role === "user").map(m => String(m.content || ""));
-  const latest = users[users.length - 1] || "";
-  let topics = matchTopics(latest);
-  if (topics.size === 0) topics = matchTopics(users.slice(-3).join(" "));
-  return [...new Set([...CORE, ...topics])]
-    .map(f => {
-      const c = loadFile(f);
-      return c ? `\n===== ${f} =====\n${c}` : "";
-    })
-    .join("\n");
+  const latest = " " + (users[users.length - 1] || "").toLowerCase() + " ";
+  const recent = " " + users.slice(-3).join(" ").toLowerCase() + " ";
+  const files = new Set(CORE);
+  let hit = false;
+  for (const t of TOPICS) {
+    if (t.k.some(k => latest.includes(k))) { t.f.forEach(f => files.add(f)); hit = true; }
+  }
+  if (!hit) for (const t of TOPICS) {
+    if (t.k.some(k => recent.includes(k))) t.f.forEach(f => files.add(f));
+  }
+  return [...files].map(f => {
+    const c = loadFile(f);
+    return c ? "\n===== " + f + " =====\n" + c : "";
+  }).join("\n");
 }
 
-/* ---------------- PROMPT ---------------- */
+/* ---------------- AGENT (SEARCH stage) PROMPT ---------------- */
 
-function buildSystemPrompt(knowledge) {
+function buildAgentPrompt(knowledge, assessment) {
   const stats = getCatalogStats();
 
+  const assessmentBlock = assessment.failed ? "" : `
+=====================================================================
+YOUR PROFESSIONAL ASSESSMENT OF THIS CUSTOMER (produced before seeing
+any products - your search and choices are HELD to this)
+=====================================================================
+NEED: ${assessment.need || "(not stated)"}
+RISK FACTORS: ${JSON.stringify(assessment.risk_factors)}
+MUST HAVE: ${JSON.stringify(assessment.must_have)}
+AVOID (do not recommend these under any circumstance):
+${JSON.stringify(assessment.avoid, null, 1)}
+SUGGESTED SEARCHES: ${JSON.stringify(assessment.search_strategy)}
+BRANDS THE CUSTOMER MENTIONED (you MUST call search_by_brand for each
+before saying ANYTHING about whether we carry them):
+${JSON.stringify(assessment.brands_mentioned)}
+
+A separate fit inspector will review every product you propose against this
+assessment. Products that violate the AVOID list will be stripped before the
+customer sees them. Do not waste your recommendation on them.
+`;
+
   return `
-You are Benny, product advisor for Victory Musical Instruments.
+You are Benny, product advisor for Victory Musical Instruments. CONSULTANT
+first, never a pushy salesperson. You are the FIRST STEP, not the whole
+journey: you handle straightforward solutions and connect people with
+Victory's expert team for anything custom.
 
-You are the FIRST STEP, not the whole journey. You understand the need, handle the
-straightforward solutions, and connect people with Victory's expert team for
-anything custom. That's not a limitation — that's how Victory works.
+Catalog: ${stats.sellable} sellable products. Reply in the customer's language.
+${assessmentBlock}
+=====================================================================
+HOW YOU WORK
+=====================================================================
 
-You are a JUNIOR consultant. You qualify, advise, and build carts. You do NOT close.
+Search per ROLE with product nouns ("wireless vocal system", "alto saxophone
+reed"). Strength, size, finish, length live in VARIANTS, never in titles —
+never put them in a query, and never claim we lack them without reading the
+variants. If a search is empty, broaden and retry before concluding anything.
 
-Catalog: ${stats.sellable} sellable products.
+Every product you OFFER must come from a tool result. Never invent products,
+prices, specs, SKUs, or stock. Judge every result: right instrument, right
+brand if one was named, right category (a video switcher is not an audio
+console; a lavalier is not a handheld wireless), right scale for the room,
+right fit for the environment.
 
-#####################################################################
-# 1. DECIDE WHAT THEY NEED BEFORE YOU LOOK AT WHAT WE HAVE
-#####################################################################
+NEVER present your recommendation as the only or final answer. Offer the
+range, mention we carry multiple brands, invite comparison. Especially for
+microphones and instruments: fit is partly taste. A good rep never acts like
+they've shown you everything.
 
-This is the most important thing on this page.
+If a budget was stated, the WHOLE system must fit it. Offer a phased build
+when it can't.
 
-A customer says "vocal microphone." That word covers a USB podcast mic, a studio
-condenser, and a handheld dynamic. They are not interchangeable. A church worship
-team needs a HANDHELD DYNAMIC CARDIOID — it rejects the room and the stage wedges.
-A USB condenser would feed back and pick up the whole sanctuary.
+=====================================================================
+WHEN THE CATALOG DOESN'T HAVE IT
+=====================================================================
 
-You KNOW this. You know when a dynamic beats a condenser, when overheads make
-sense, why a video switcher is not a mixing console, why a desktop studio monitor
-cannot cover 200 seats.
+Do NOT substitute the closest word-match. "We don't have it" is never the end:
+say something like -
 
-So: THINK FIRST. Decide what the customer actually needs — as a working audio
-professional — and write it into the "spec" field when you search. State what
-would NOT qualify. Only then look at products.
+  "I'm not seeing the right option on the website, but we certainly have
+   solutions. We've partnered with some of the top audio brands in the world.
+   We have a strong, experienced team that can build a custom solution for
+   you, and we'd love the chance to build it with you."
 
-Then judge every result against YOUR OWN SPEC. The search matched words. You
-decide what's right. If nothing meets your spec, recommend NOTHING for that role
-and hand it to the team. That is the correct answer, not a failure.
+Then: ${PHONE} or ${EMAIL}. Never commit to a specific brand, model, or price
+for something off-catalog - and never announce that limitation. Build
+everything you legitimately CAN meanwhile.
 
-#####################################################################
-# 2. SEARCH BROAD, JUDGE NARROW
-#####################################################################
+=====================================================================
+ABSOLUTE RULES
+=====================================================================
+- NEVER send a customer to another retailer. Ever.
+- NEVER say "we don't sell/carry X." For brands: call search_by_brand FIRST.
+  If it returns products, we carry the brand - say so and narrow down. Only
+  after the catalog AND check_live_website are both empty may you say "I'm not
+  seeing that in our catalog at the moment," then offer the team.
+- NEVER claim to have added anything to the cart. You cannot. Say "just hit
+  Add to Cart below."
+- NEVER contradict the customer's terminology. Never pressure. Never argue
+  with criticism - thank them and keep helping. NEVER close: no unprompted
+  discounts or financing, no "what's stopping you today."
+- Drafts: acknowledge they exist, route to the team, never price them.
 
-The "query" you send and the "spec" you write are DIFFERENT THINGS.
-
-Search with the PRODUCT NOUN only. Judge with the spec afterwards.
-
-*** STRENGTH, SIZE, FINISH, LENGTH, AND COLOR ARE VARIANT OPTIONS. ***
-*** THEY ARE NOT IN PRODUCT TITLES. SEARCHING FOR THEM FINDS NOTHING. ***
-
-A customer wants "soft alto sax reeds."
-  RIGHT: query "alto saxophone reed" -> then read each product's "options" and
-         "variants" to find the soft strength (2 or 2.5).
-  WRONG: query "soft alto saxophone reed" -> 0 results -> you wrongly tell them
-         we don't carry it. We DO. This exact mistake lost a sale.
-
-Same for "silver trumpet" (finish is a variant), "10 foot XLR cable" (length is a
-variant), "14 inch snare head" (size is a variant).
-
-If a search comes back empty, BROADEN IT AND TRY AGAIN before you conclude
-anything. "alto saxophone reed" -> "saxophone reed" -> "reed". Never give up after
-one search.
-
-NEVER OFFER THE WRONG INSTRUMENT. If they ask for ALTO, do not offer a BARITONE
-reed and call it "suitable." It is a different instrument. That is worse than
-saying nothing.
-
-NEVER OFFER THE WRONG BRAND. If the customer asks "do you have Hosa?", do NOT say
-"yes we carry Hosa" and then show an On-Stage cable. The product you show MUST be
-the brand they asked for. Use search_by_brand to find it. If you genuinely can't
-find that brand, say you're not seeing it — do NOT quietly swap in a different one.
-Claiming one brand and showing another destroys trust instantly.
-
-NEVER OFFER THE WRONG PRODUCT CATEGORY. A lavalier mic is not a wireless system.
-A studio interface is not a mixing console. Read the productType before you offer.
-
-#####################################################################
-# YOU CANNOT ADD ANYTHING TO THE CART
-#####################################################################
-
-You have NO ability to modify the customer's cart. NONE.
-
-NEVER say "I've added it to your cart" or "I've added the reed to your cart."
-That is FALSE. The customer will go to checkout, find an empty cart, and lose
-trust in us.
-
-What actually happens: you recommend a product, the page shows a card with an
-Add to Cart button, and THE CUSTOMER clicks it.
-
-If they say "add it to my cart," respond with something like:
-  "Here it is — just hit Add to Cart below and it's yours."
-  "Perfect. The Add to Cart button is right below."
-
-You OFFER. They ACT. Never claim you did it for them.
-
-#####################################################################
-# 3. QUALIFY — BUT DON'T INTERROGATE
-#####################################################################
-
-Most first inquiries need a question or two. "I need a reed" → which horn, and what
-strength. "I need a mixer" → audio or video, roughly how many inputs.
-
-Ask ONLY what actually changes your recommendation. Then START HELPING.
-
-NEVER ask something they already told you.
-NEVER stack question after question. You are not an interrogation.
-If they say "I don't know" — STOP ASKING and START ADVISING. That's your cue to
-teach them, not to ask again. ("Not sure on strength? For a developing alto player
-a 2.5 is the usual starting point, here's why.")
-
-Get enough to be useful, then be useful.
-
-#####################################################################
-# 3. WHEN THE CATALOG DOESN'T HAVE IT
-#####################################################################
-
-If nothing genuinely meets your spec, do NOT substitute. Do not hand someone the
-closest word-match and call it a solution.
-
-But "we don't have it" is NEVER the end of the conversation. Being honest doesn't
-mean being unhelpful. THE WEBSITE IS A SUBSET OF THE COMPANY — Victory is also an
-integration business with supplier relationships beyond what's listed online.
-
-Say something like:
-
-  "I'm not seeing the right mixer on the website, but we certainly have solutions.
-   We've partnered with some of the top audio brands in the world. We have a strong,
-   experienced team that can build a custom solution for you, and we'd love the
-   chance to build it with you."
-
-Then: ${PHONE} or ${EMAIL}
-
-SILENT RULE: never commit to a specific brand, model, or price for something not in
-the catalog — AND NEVER ANNOUNCE THAT LIMITATION. Don't say "I can't promise a
-brand." Nobody asked. It plants doubt. Just don't make the commitment.
-
-Meanwhile, build everything you legitimately CAN into the cart. 80% of a system plus
-a reason to call you is a WIN.
-
-#####################################################################
-# 4. RETURN STRUCTURED JSON — NOTHING ELSE
-#####################################################################
-
-Your entire response is one JSON object. No markdown fences, no text around it.
-
+=====================================================================
+OUTPUT - ONE JSON OBJECT, NOTHING ELSE
+=====================================================================
 {
-  "reply": "Your message. Warm, concise, conversational.",
+  "reply": "your message - warm, concise, in the customer's language",
   "products": [
-    {
-      "handle": "exact-handle-from-a-catalog-tool",
-      "why": "why THIS product meets the spec you wrote",
-      "variant": "optional — the exact variant title, e.g. 'Soft (1.5-2.0)' or '2.5'"
-    }
+    { "handle": "from-a-catalog-tool", "why": "why it fits THIS customer",
+      "variant": "optional exact variant title, e.g. '2.5' or 'Soft (1.5-2.0)'" }
   ],
-  "handoff": {
-    "needed": true,
-    "reason": "what you couldn't fill, e.g. 'live-sound mixing console'",
-    "subject": "email subject, e.g. 'Church Sound System - Mixer Inquiry'"
-  }
+  "handoff": { "needed": true|false, "reason": "...", "subject": "email subject" }
 }
-
-- "products": ONLY handles from search_catalog / search_by_brand / get_product_by_handle.
-  NEVER from check_live_website — those are not sellable and have no verified price.
-- "variant": if the product has options (reed strength, cable length, finish) and you've
-  identified the right one for this customer, put its EXACT title here. The Add to Cart
-  button will then add THAT variant. If you omit it, the default variant is used.
-  Copy the variant title exactly as it appears in the tool result.
-- Every product needs a real "why" tied to your spec. If you can't write one, remove it.
-- NEVER write prices in "reply". NEVER paste URLs. NEVER write "Add to Cart".
-  The card shows image, price, and button automatically.
-- NEVER list products as bullets in "reply" while leaving "products" empty.
-  That's a lost sale — no button, nothing to click.
-- Drafts are never in "products". You may mention they exist and route to the team.
-
-#####################################################################
-# 5. BUDGET
-#####################################################################
-
-A stated budget covers the WHOLE SYSTEM, not one item. Add it up before proposing.
-If it won't stretch, offer a phased build: essentials now, expand later. Churches and
-schools grow into systems — that's an honest, useful answer.
-
-#####################################################################
-# 6. FOLLOW THE CUSTOMER
-#####################################################################
-
-They change topic — mixer to saxophone — you follow. Immediately. Never drag them
-back to what you were selling.
-
-#####################################################################
-# 7. NEVER
-#####################################################################
-
-- NEVER invent a product, price, spec, SKU, or stock status.
-- NEVER send someone to another retailer. Ever. The answer is ${PHONE} / ${EMAIL}.
-- NEVER say "we don't sell that." Check check_live_website first, then say
-  "I'm not seeing that in our catalog at the moment" and offer the team.
-- NEVER contradict the customer. They say "hard drive," you say "hard drive."
-- NEVER pressure them or make them feel stupid.
-- NEVER argue if they criticize a product. Thank them, take it seriously, keep helping.
-- NEVER close. No "what's stopping you today?", no unprompted discounts, no financing
-  pitch. You can't read a face — that's a human's job. If they ASK about financing,
-  answer factually.
-
-Every customer gets your full time and respect. Be warm. Be concise.
+Never write prices or URLs in "reply" - cards show them. Never mention a
+product in "reply" without putting its handle in "products".
 
 ${knowledge}
 `.trim();
 }
 
-/* ---------------- AGENT LOOP ---------------- */
-
-const MAX_TOOL_ROUNDS = 10;
+/* ---------------- helpers ---------------- */
 
 function parseJSON(raw) {
   if (!raw) return null;
   let t = String(raw).trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-  try {
-    return JSON.parse(t);
-  } catch {
+  try { return JSON.parse(t); } catch {
     const s = t.indexOf("{"), e = t.lastIndexOf("}");
-    if (s !== -1 && e > s) {
-      try { return JSON.parse(t.slice(s, e + 1)); } catch { return null; }
-    }
+    if (s !== -1 && e > s) { try { return JSON.parse(t.slice(s, e + 1)); } catch { return null; } }
     return null;
   }
 }
 
 function buildMailto(subject, body) {
-  return `mailto:${EMAIL}?subject=${encodeURIComponent(subject || "Victory Musical Instruments Inquiry")}` +
-    `&body=${encodeURIComponent((body || "") + "\n\n---\nMy name:\nBest phone number:\nBest time to reach me:\n")}`;
+  return "mailto:" + EMAIL +
+    "?subject=" + encodeURIComponent(subject || "Victory Musical Instruments Inquiry") +
+    "&body=" + encodeURIComponent((body || "") + "\n\n---\nMy name:\nBest phone number:\nBest time to reach me:\n");
 }
+
+function isSellableRecord(p) {
+  return p && p.sellable && typeof p.priceAmount === "number" && p.priceAmount > 0;
+}
+
+// Resolve a proposed product against catalog + verdicts + variant choice.
+function resolveProducts(proposed, seenMap, verdicts) {
+  const out = [];
+  const stripped = [];
+  const handled = new Set();
+
+  for (const p of proposed || []) {
+    if (!p || !p.handle || handled.has(p.handle)) continue;
+    handled.add(p.handle);
+
+    const candidate = seenMap.get(p.handle) || slim(findByHandle(p.handle));
+    if (!isSellableRecord(candidate)) { stripped.push({ handle: p.handle, reason: "not sellable/priced" }); continue; }
+
+    if (verdicts) {
+      const v = verdicts.get(p.handle);
+      if (v && v.verdict !== "accept") { stripped.push({ handle: p.handle, reason: v.verdict + ": " + v.reason }); continue; }
+    }
+
+    const item = { ...candidate, why: p.why || null };
+
+    if (p.variant && Array.isArray(candidate.variants)) {
+      const wanted = String(p.variant).trim().toLowerCase();
+      const match = candidate.variants.find(v =>
+        v && v.available && (
+          String(v.title || "").trim().toLowerCase() === wanted ||
+          (v.options || []).some(o => String(o.value || "").trim().toLowerCase() === wanted)
+        )
+      );
+      if (match && match.addToCartUrl) {
+        item.addToCartUrl = match.addToCartUrl;
+        item.selectedVariant = match.title;
+        if (typeof match.price === "number" && match.price > 0) {
+          item.priceAmount = match.price;
+          item.price = (candidate.currencyCode || "USD") + " " + match.price;
+        }
+      }
+    }
+
+    out.push(item);
+  }
+  return { products: out, stripped };
+}
+
+/* ---------------- THE ROUTE ---------------- */
+
+const MAX_TOOL_ROUNDS = 8;
 
 router.post("/", async (req, res) => {
   try {
     const { messages = [] } = req.body;
 
-    // SAFETY NET: if the catalog is empty (e.g. a sync failed), Benny must NOT
-    // tell customers we don't carry things. An empty index is a system problem,
-    // never evidence about inventory. Fail honestly instead of lying.
+    // Empty-catalog safety net: never lie about inventory because WE are broken.
     const stats = getCatalogStats();
     if (!stats.sellable) {
-      console.error("CATALOG EMPTY — refusing to answer product questions.");
       return res.json({
-        reply:
-          "I'm having trouble reaching our product catalog right now, so I don't want to " +
+        reply: "I'm having trouble reaching our product catalog right now, so I don't want to " +
           "give you wrong information. Please call us at " + PHONE + " or email " + EMAIL +
           " and the team will take care of you right away.",
         recommendedProducts: [],
-        handoff: {
-          needed: true,
-          reason: "catalog_unavailable",
-          phone: PHONE,
-          email: EMAIL,
-          mailto: buildMailto("Victory Musical Instruments Inquiry", "")
-        },
-        toolTrace: [],
+        handoff: { needed: true, reason: "catalog_unavailable", phone: PHONE, email: EMAIL,
+                   mailto: buildMailto("Victory Musical Instruments Inquiry", "") },
+        pipeline: { stage: "catalog_empty" },
         catalogStats: stats
       });
     }
 
+    const lastUser = [...messages].reverse().find(m => m.role === "user");
+    const lastUserText = String(lastUser?.content || "");
+
+    /* ---- STAGE 1: ASSESS ---- */
+    const assessment = await runAssessment(messages);
+
+    /* ---- STAGE 2: DISCOVER / CHAT — one fast call, no tools ---- */
+    if ((assessment.mode === "discovery" || assessment.mode === "chat") && assessment.reply) {
+      return res.json({
+        reply: assessment.reply,
+        recommendedProducts: [],
+        handoff: { needed: false },
+        pipeline: { stage: assessment.mode, assessment },
+        catalogStats: stats
+      });
+    }
+
+    /* ---- STAGE 3: SEARCH (agent loop with tools) ---- */
     const working = [
-      { role: "system", content: buildSystemPrompt(loadKnowledge(messages)) },
+      { role: "system", content: buildAgentPrompt(loadKnowledge(messages), assessment) },
       ...messages
     ];
 
-    // ENFORCEMENT: only products from CATALOG tools can ever be sold.
-    // Live-site results are deliberately never added here, so they can never
-    // become a card, a price, or an Add to Cart button.
-    const sellableFromCatalog = new Map();
+    const seen = new Map();       // sellable products retrieved from CATALOG tools this turn
     const toolTrace = [];
     let final = null;
 
@@ -353,37 +316,27 @@ router.post("/", async (req, res) => {
       working.push(msg);
 
       const calls = msg.tool_calls || [];
-      if (!calls.length) {
-        final = msg;
-        break;
-      }
+      if (!calls.length) { final = msg; break; }
 
       for (const call of calls) {
         let args = {};
         try { args = JSON.parse(call.function.arguments || "{}"); } catch { args = {}; }
 
         const result = await executeTool(call.function.name, args);
-
         toolTrace.push({
           tool: call.function.name,
-          spec: args.spec || null,        // what Benny committed to BEFORE searching
+          spec: args.spec || null,
           query: args.query || args.brand || args.category || args.handle || null,
           found: result.found ?? result.products?.length ?? 0
         });
 
-        // ONLY catalog tools contribute sellable products. check_live_website
-        // returns `live_site_results`, not `products`, so it can't leak in.
         if (call.function.name !== "check_live_website") {
-          const add = p => { if (p && p.handle && p.sellable) sellableFromCatalog.set(p.handle, p); };
+          const add = p => { if (p && p.handle && p.sellable) seen.set(p.handle, p); };
           (result.products || []).forEach(add);
           if (result.product) add(result.product);
         }
 
-        working.push({
-          role: "tool",
-          tool_call_id: call.id,
-          content: JSON.stringify(result)
-        });
+        working.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
       }
     }
 
@@ -397,92 +350,79 @@ router.post("/", async (req, res) => {
       final = wrap.choices[0].message;
     }
 
-    const parsed = parseJSON(final?.content);
-    const reply = parsed?.reply || final?.content || "";
+    let parsed = parseJSON(final?.content) || { reply: final?.content || "", products: [], handoff: { needed: false } };
 
-    // HARD GATE: a product can only be sold if it came from a catalog tool in
-    // THIS conversation turn and is marked sellable. Anything else is stripped —
-    // no card, no price, no cart button. This is what makes it impossible for a
-    // live-site result to be sold.
-    //
-    // ALSO: a product with no price, or a price of 0.00, is a BROKEN RECORD.
-    // It must never reach a customer with an Add to Cart button. That's a
-    // liability, not a sale.
-    const rejected = [];
-    const seenHandles = new Set();
+    /* ---- STAGE 4: VALIDATE (consult mode only; simple lookups skip it) ---- */
+    let verdicts = null;
+    let validated = false;
+    let strippedInfo = [];
 
-    const isSellableRecord = p =>
-      p &&
-      p.sellable &&
-      typeof p.priceAmount === "number" &&
-      p.priceAmount > 0;
+    const proposedCandidates = (parsed.products || [])
+      .map(p => seen.get(p.handle) || slim(findByHandle(p.handle)))
+      .filter(isSellableRecord);
 
-    const recommendedProducts = (parsed?.products || [])
-      .map(p => {
-        // Dedupe: never show the same product twice in one answer.
-        if (seenHandles.has(p.handle)) return null;
+    if (assessment.mode === "consult" && !assessment.failed && proposedCandidates.length) {
+      const v = await validateFit(assessment, lastUserText, proposedCandidates);
+      if (v) { verdicts = v.verdicts; validated = true; }
+      // v === null -> validator infra failure -> FAIL OPEN, flagged below.
+    }
 
-        const fromCatalog = sellableFromCatalog.get(p.handle);
-        const candidate = fromCatalog || slim(findByHandle(p.handle));
+    /* ---- STAGE 5: SELL (with one repair pass if the validator caught something) ---- */
+    let resolved = resolveProducts(parsed.products, seen, verdicts);
+    strippedInfo = resolved.stripped;
 
-        if (!isSellableRecord(candidate)) {
-          rejected.push(p.handle);
-          return null;
-        }
+    const validatorRejectedSomething =
+      verdicts && resolved.stripped.some(s => s.reason.startsWith("reject") || s.reason.startsWith("needs_human"));
 
-        seenHandles.add(p.handle);
-
-        const result = { ...candidate, why: p.why || null };
-
-        // If Benny identified a specific variant (reed strength, cable length,
-        // sax finish), make the Add to Cart button add THAT variant — not the
-        // default. Otherwise a customer asking for a soft reed gets whatever
-        // strength happens to be first.
-        if (p.variant && Array.isArray(candidate.variants)) {
-          const wanted = String(p.variant).trim().toLowerCase();
-          const match = candidate.variants.find(v => {
-            if (!v || !v.available) return false;
-            if (String(v.title || "").trim().toLowerCase() === wanted) return true;
-            // Also match on option values, e.g. Strength = "2.5"
-            return (v.options || []).some(
-              o => String(o.value || "").trim().toLowerCase() === wanted
-            );
-          });
-
-          if (match && match.addToCartUrl) {
-            result.addToCartUrl = match.addToCartUrl;
-            result.selectedVariant = match.title;
-            if (typeof match.price === "number" && match.price > 0) {
-              result.priceAmount = match.price;
-              result.price = `${candidate.currencyCode || "USD"} ${match.price}`;
-            }
+    if (validatorRejectedSomething) {
+      // The reply text likely mentions products that just got stripped.
+      // One repair call: rewrite around the verdicts. Server still enforces.
+      const repair = await client.chat.completions.create({
+        model: "gpt-4.1-mini",
+        temperature: 0.4,
+        messages: [
+          ...working,
+          {
+            role: "system",
+            content:
+              "A fit inspector reviewed your proposed products against your own assessment. " +
+              "These were REJECTED and will NOT be shown to the customer:\n" +
+              JSON.stringify(resolved.stripped, null, 1) + "\n" +
+              "Rewrite your final JSON answer now. Do not mention or include rejected products. " +
+              "Keep any accepted products. If a role is now unfilled, be honest in the customer's " +
+              "language, keep the door open with the custom-solution handoff (" + PHONE + " / " + EMAIL + "), " +
+              "and set handoff.needed=true. Do not call tools."
           }
-        }
+        ],
+        response_format: { type: "json_object" }
+      });
 
-        return result;
-      })
-      .filter(Boolean);
-
-    if (rejected.length) {
-      console.warn("Stripped non-catalog/unsellable handles:", rejected);
+      const repaired = parseJSON(repair.choices?.[0]?.message?.content);
+      if (repaired && repaired.reply) {
+        parsed = repaired;
+        resolved = resolveProducts(parsed.products, seen, verdicts);
+      }
     }
 
     const handoff = parsed?.handoff?.needed
-      ? {
-          needed: true,
-          reason: parsed.handoff.reason || null,
-          phone: PHONE,
-          email: EMAIL,
-          mailto: buildMailto(parsed.handoff.subject, reply)
-        }
+      ? { needed: true, reason: parsed.handoff.reason || null, phone: PHONE, email: EMAIL,
+          mailto: buildMailto(parsed.handoff.subject, parsed.reply) }
       : { needed: false };
 
     res.json({
-      reply,
-      recommendedProducts,
+      reply: parsed.reply || "",
+      recommendedProducts: resolved.products,
       handoff,
       toolTrace,
-      catalogStats: getCatalogStats()
+      pipeline: {
+        stage: "sell",
+        mode: assessment.mode,
+        assessment: assessment.failed ? { failed: true } : assessment,
+        validated,                       // false = validator failed open; supervise these
+        verdicts: verdicts ? [...verdicts.entries()].map(([h, v]) => ({ handle: h, ...v })) : null,
+        stripped: strippedInfo
+      },
+      catalogStats: stats
     });
   } catch (error) {
     console.error(error);
