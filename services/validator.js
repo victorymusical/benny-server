@@ -38,12 +38,23 @@ For EACH candidate return a verdict:
 - "accept": the product genuinely serves the stated need and violates no
   avoid-criterion. Products don't need to be perfect - a solid, honest fit is
   an accept. Do NOT reject merely because something better might exist.
-- "reject": the product does not serve the stated need (wrong category, wrong
-  instrument, wrong scale) OR it matches a named avoid-criterion (e.g. a
-  fixed-frequency single-antenna wireless system when the assessment says to
-  avoid those for a congested RF environment).
-- "needs_human": the product might work but a professional should confirm
-  (borderline scale, compatibility uncertainty, undersized for the room).
+- "reject": ONLY when you have positive EVIDENCE the product does not serve
+  the need (wrong category, wrong instrument, wrong scale) or that it matches
+  a named avoid-criterion. Evidence means its data, or what you genuinely KNOW
+  about that specific product line (e.g. you know the AKG WMS40 Mini is a
+  fixed-frequency single-antenna system). ABSENCE of information is NOT
+  evidence: titles and descriptions rarely state RF architecture, wattage
+  details, or build specifics. "The title doesn't mention diversity" is never
+  grounds for rejection. When the data is silent and your own knowledge of the
+  product line suggests it fits, accept.
+- "needs_human": genuine uncertainty a professional should resolve
+  (borderline scale, compatibility unknown even to you, undersized for the
+  room). Use this sparingly - it removes the product from the sale.
+
+Remember the two failure costs: accepting a true misfit sells wrong gear, but
+rejecting on missing paperwork strands a customer who could have been served.
+Both are failures. Judge like a knowledgeable colleague, not a compliance
+officer.
 
 Judge by what the product IS (its type, its nature), not by how its title is
 worded. A "Live Streaming Mixer (HDMI)" is a video switcher regardless of the
