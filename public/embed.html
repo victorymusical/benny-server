@@ -406,6 +406,29 @@
       text-decoration: underline;
     }
 
+    /* ────────────── HANDOFF (the gap becomes an invitation) ────────────── */
+    .benny-handoff {
+      margin: 14px 0 4px;
+      padding: 14px 16px;
+      border: 1px solid var(--border-default);
+      border-left: 3px solid var(--accent);
+      border-radius: var(--radius-md);
+      background: var(--bg-soft);
+    }
+
+    .benny-handoff-msg {
+      font-weight: 600;
+      font-size: 14px;
+      color: var(--text-primary);
+      margin-bottom: 10px;
+    }
+
+    .benny-handoff-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
     /* ────────────── PRODUCT CARDS ────────────── */
     .benny-card {
       display: flex;
@@ -1167,6 +1190,47 @@
           const content = document.createElement("div");
           content.className = "benny-content";
           renderAssistantBody(content, text, options.products || []);
+
+          // Products now come as STRUCTURED handles from the server, not from
+          // hoping Benny wrote a [[PRODUCT:]] marker in his prose. If he
+          // recommended products, they render — no lost sales.
+          const prods = options.products || [];
+          const hasMarkers = /\[\[PRODUCT:/.test(String(text));
+          if (prods.length && !hasMarkers) {
+            prods.forEach(p => content.appendChild(buildProductCard(p)));
+          }
+
+          // Handoff: the gap becomes an invitation, never a dead end.
+          const ho = options.handoff;
+          if (ho && ho.needed) {
+            const box = document.createElement("div");
+            box.className = "benny-handoff";
+
+            const msg = document.createElement("div");
+            msg.className = "benny-handoff-msg";
+            msg.textContent = "Let's build this with you.";
+            box.appendChild(msg);
+
+            const actions = document.createElement("div");
+            actions.className = "benny-handoff-actions";
+
+            const call = document.createElement("a");
+            call.className = "benny-btn-cart";
+            call.setAttribute("href", "tel:" + (ho.phone || "").replace(/[^0-9]/g, ""));
+            call.textContent = "Call " + (ho.phone || "");
+            actions.appendChild(call);
+
+            if (ho.mailto) {
+              const mail = document.createElement("a");
+              mail.className = "benny-btn-view";
+              mail.setAttribute("href", ho.mailto);
+              mail.textContent = "Email the team";
+              actions.appendChild(mail);
+            }
+
+            box.appendChild(actions);
+            content.appendChild(box);
+          }
           bubble.appendChild(content);
         }
       }
@@ -1251,7 +1315,10 @@
           content: reply
         });
 
-        addToChat("assistant", reply, { products: data.recommendedProducts || [] });
+        addToChat("assistant", reply, {
+          products: data.recommendedProducts || [],
+          handoff: data.handoff || null
+        });
         console.log(data);
 
       } catch (error) {
