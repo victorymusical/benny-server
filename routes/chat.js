@@ -263,7 +263,7 @@ function resolveProducts(proposed, seenMap, verdicts) {
       );
       if (match && match.addToCartUrl) {
         item.addToCartUrl = match.addToCartUrl;
-        item.selectedVariant = match.title;
+        item.selectedVariant = (match.title && match.title !== "Default Title") ? match.title : null;
         if (typeof match.price === "number" && match.price > 0) {
           item.priceAmount = match.price;
           item.price = (candidate.currencyCode || "USD") + " " + match.price;
@@ -381,8 +381,12 @@ router.post("/", async (req, res) => {
     let validated = false;
     let strippedInfo = [];
 
+    // Validator judges the FULL catalog record (findByHandle), not the slim
+    // view the agent saw — the slim description is trimmed for token economy,
+    // but the judge needs the whole stored description ("for RE3 handheld
+    // transmitters" often sits deep in the text).
     const proposedCandidates = (parsed.products || [])
-      .map(p => seen.get(p.handle) || slim(findByHandle(p.handle)))
+      .map(p => findByHandle(p.handle))
       .filter(isSellableRecord);
 
     if (assessment.mode === "consult" && !assessment.failed && proposedCandidates.length) {
