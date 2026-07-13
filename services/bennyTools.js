@@ -167,6 +167,12 @@ export async function executeTool(name, args) {
             "Judge each against YOUR spec above. Reject anything that doesn't fit.",
             "NEVER offer the wrong instrument. If they asked for ALTO, a BARITONE reed is WRONG — " +
               "it is not 'suitable', it is a different instrument. Do not substitute.",
+            "NEVER offer the wrong BRAND. If the customer asked for Hosa, do not say 'yes we carry " +
+              "Hosa' and then show an On-Stage product. The product you show MUST be the brand they " +
+              "asked for. If you don't find that brand, search again with search_by_brand. If it's " +
+              "genuinely not there, say you're not seeing it — do NOT quietly swap in another brand.",
+            "NEVER offer the wrong PRODUCT CATEGORY. A lavalier mic is not a wireless system. " +
+              "A studio interface is not a mixing console. Read the productType.",
             withOptions > 0
               ? "IMPORTANT: some of these have `options` and `variants`. Strength, size, finish, " +
                 "and length live THERE, not in the title. If the customer asked for a 'soft' reed " +

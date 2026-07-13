@@ -88,6 +88,13 @@ export function searchCatalog(query, opts = {}) {
 
   for (const p of all) {
     if (!includeDrafts && !p.sellable) continue;
+
+    // BROKEN RECORD GUARD: a sellable product with no price, or a price of 0,
+    // is a data error (bad import, missing variant price). It must never be
+    // offered to a customer with an Add to Cart button. Drafts legitimately
+    // have no price, so this only applies to products we claim we can sell.
+    if (p.sellable && !(typeof p.priceAmount === "number" && p.priceAmount > 0)) continue;
+
     const score = scoreProduct(p, qTokens);
     if (score > 0) scored.push({ product: p, score });
   }
