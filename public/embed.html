@@ -1124,13 +1124,17 @@
         }
       });
 
-      // Fallback: model gave no usable markers but we have products. Show the
-      // top few so the customer always gets clickable cards.
-      if (cardsRendered === 0 && products && products.length) {
-        products.slice(0, 4).forEach(product => {
-          container.appendChild(buildProductCard(product));
-        });
-      }
+      // NO FALLBACK.
+      //
+      // Previously, if Benny placed no [[PRODUCT:]] markers, we dumped the top
+      // few retrieved products as cards anyway. That was wrong: when Benny is
+      // asking scoping questions ("how many seats?") he correctly recommends
+      // NOTHING, and the fallback filled the space with whatever retrieval
+      // happened to score highest — a random equipment stand, a USB interface.
+      //
+      // Cards now appear ONLY when Benny deliberately recommends a product.
+      // Silence is the correct answer while he's still consulting.
+      void cardsRendered;
     }
 
     function addToChat(role, text, options = {}) {
