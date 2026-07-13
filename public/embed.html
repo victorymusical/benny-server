@@ -780,6 +780,7 @@
       margin-left: 10px;
       font-style: italic;
       transition: opacity 0.4s ease;
+      white-space: nowrap;
     }
 
     @keyframes typingPulse {
@@ -935,7 +936,7 @@
           placeholder="Ask Benny about instruments, audio, video, or complete setups..."
         ></textarea>
 
-        <button id="sendButton" onclick="sendMessage()">Send</button>
+        <button id="sendButton" type="button" onclick="sendMessage()">Send</button>
       </div>
     </footer>
   </main>
@@ -1062,7 +1063,7 @@
 
       // Show which variant Benny picked (reed strength, cable length, finish),
       // so the customer can see the Add to Cart button adds the RIGHT one.
-      if (product.selectedVariant) {
+      if (product.selectedVariant && product.selectedVariant !== "Default Title") {
         const v = document.createElement("div");
         v.className = "benny-card-variant";
         v.textContent = product.selectedVariant;
