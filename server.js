@@ -33,6 +33,16 @@ app.get("/", (req, res) => {
 
 const port = process.env.PORT || 3000;
 
+// Railway sends SIGTERM when a newer queued deployment replaces this
+// container. Without a handler, Node exits non-zero and Railway cosmetically
+// labels the superseded deploy "Crashed". Exit cleanly instead.
+const shutdown = signal => {
+  console.log(`${signal} received — shutting down cleanly.`);
+  process.exit(0);
+};
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
 app.listen(port, async () => {
   console.log(`Benny server running on port ${port}`);
 
