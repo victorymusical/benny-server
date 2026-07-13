@@ -4,7 +4,12 @@ import dotenv from "dotenv";
 import chatRoutes from "./routes/chat.js";
 import debugRoutes from "./routes/debug.js";
 import adminRoutes from "./routes/admin.js";
-import { loadCatalogFromDisk, syncCatalog, getCatalogCount } from "./services/catalog.js";
+import {
+  loadCatalogFromDisk,
+  syncCatalog,
+  getCatalogCount,
+  getActiveCount
+} from "./services/catalog.js";
 
 dotenv.config();
 
@@ -21,34 +26,58 @@ app.get("/", (req, res) => {
   res.json({
     status: "ok",
     service: "Benny Server",
-    message: "Benny backend is running.",
-    catalogProducts: getCatalogCount()
+    catalogProducts: getCatalogCount(),
+    sellable: getActiveCount()
   });
 });
 
 const port = process.env.PORT || 3000;
 
-app.listen(port, () => {
+app.listen(port, async () => {
   console.log(`Benny server running on port ${port}`);
 
-  // Load the saved catalog immediately so Benny has it on boot.
+  // ------------------------------------------------------------------
+  // CRITICAL: Benny must NEVER serve customers with an empty catalog.
+  //
+  // Railway's filesystem is EPHEMERAL — it is wiped on every deploy. That
+  // erased Benny's saved catalog, leaving him blind until someone manually
+  // ran a sync. He then told customers we don't carry products we've had in
+  // stock for a month (the BARI reed incident).
+  //
+  // Now: on boot, load from disk. If that comes up empty (i.e. Railway just
+  // wiped it), sync immediately and automatically. A deploy can no longer
+  // blind him.
+  // ------------------------------------------------------------------
   const loaded = loadCatalogFromDisk();
 
-  // If nothing was saved yet, do an initial sync in the background.
-  if (!loaded) {
-    console.log("No saved catalog found. Running initial sync in the background...");
-    syncCatalog({ verbose: true }).catch(err =>
-      console.error("Initial catalog sync failed:", err.message)
-    );
+  if (!loaded || getCatalogCount() === 0) {
+    console.log("Catalog is EMPTY on boot (Railway wipes the filesystem on deploy).");
+    console.log("Auto-syncing now so Benny is never blind to the catalog...");
+    try {
+      const result = await syncCatalog({ verbose: true });
+      console.log(`Auto-sync complete: ${result.count} products (${result.active} sellable).`);
+    } catch (err) {
+      console.error("AUTO-SYNC FAILED — Benny has no catalog:", err.message);
+      // Retry once shortly after; a transient Shopify hiccup shouldn't leave
+      // him blind for hours until the next scheduled refresh.
+      setTimeout(() => {
+        console.log("Retrying catalog sync...");
+        syncCatalog({ verbose: false }).catch(e =>
+          console.error("Retry also failed:", e.message)
+        );
+      }, 60_000);
+    }
+  } else {
+    console.log(`Catalog loaded from disk: ${getCatalogCount()} products.`);
   }
 
-  // Refresh on a schedule. Default every 6 hours; override with CATALOG_SYNC_HOURS.
+  // Scheduled refresh so new products appear without a deploy.
   const hours = Number(process.env.CATALOG_SYNC_HOURS || 6);
   if (hours > 0) {
     setInterval(() => {
-      console.log("Scheduled catalog refresh starting...");
+      console.log("Scheduled catalog refresh...");
       syncCatalog({ verbose: false }).catch(err =>
-        console.error("Scheduled catalog sync failed:", err.message)
+        console.error("Scheduled sync failed:", err.message)
       );
     }, hours * 60 * 60 * 1000);
   }
