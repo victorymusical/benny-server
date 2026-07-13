@@ -33,39 +33,53 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: "search_catalog",
       description:
-        "Search Victory's real catalog. This is the ONLY way to find products you can sell.\n\n" +
-        "BEFORE you search, you must decide what the customer actually NEEDS — not just what " +
-        "word they used. Fill in `spec` with the real requirement, in your own words, as a " +
-        "working audio professional would state it.\n\n" +
-        "Examples of thinking BEFORE searching:\n" +
-        "  Customer says 'vocal mic for church' → spec: 'Handheld dynamic cardioid mic for live " +
-        "worship vocals. Must reject room noise and stage wedges. NOT a USB podcast mic, NOT a " +
-        "studio condenser.'\n" +
-        "  Customer says 'mixer for church' → spec: 'Live-sound audio mixing console for mics and " +
-        "instruments feeding a PA. NOT a video switcher, NOT a studio recording interface.'\n" +
-        "  Customer says 'speakers for 200 seats' → spec: 'Powered full-range PA loudspeakers " +
-        "sized for a 200-seat room. NOT desktop studio monitors.'\n\n" +
-        "Then judge the results against your own spec. Anything that doesn't meet it, reject.",
+        "Search Victory's real catalog. The ONLY way to find products you can sell.\n\n" +
+        "TWO SEPARATE FIELDS — DO NOT CONFUSE THEM:\n\n" +
+        "`query` = SEARCH BROAD. Use ONLY the product noun and the instrument. This is matched " +
+        "against product TITLES and TYPES. Keep it simple.\n" +
+        "`spec` = JUDGE NARROW. What the customer actually needs. Used by YOU to evaluate the " +
+        "results afterwards. NEVER put spec details into the query.\n\n" +
+        "*** CRITICAL: attributes like reed STRENGTH (soft/2.5/hard), sax FINISH (gold/silver), " +
+        "cable LENGTH, or drumhead SIZE are VARIANT OPTIONS. They are NOT in product titles. " +
+        "Searching for them returns NOTHING and makes you wrongly tell a customer we don't " +
+        "carry it. Search for the PRODUCT, then read its `options` and `variants` to find the " +
+        "strength/size/finish. ***\n\n" +
+        "RIGHT:\n" +
+        "  Customer: 'soft alto sax reeds'\n" +
+        "  query: 'alto saxophone reed'   <-- broad, matches titles\n" +
+        "  spec: 'Alto sax reed, soft strength (around 2 or 2.5). Check variant options for strength.'\n\n" +
+        "WRONG (this is the bug that lost a sale):\n" +
+        "  query: 'soft alto saxophone reed'   <-- the word 'soft' is in no title. Returns 0.\n\n" +
+        "MORE EXAMPLES:\n" +
+        "  'vocal mic for church' -> query: 'vocal microphone' | spec: 'Handheld dynamic cardioid " +
+        "for live worship. Rejects room noise and wedges. NOT a USB podcast mic, NOT a studio condenser.'\n" +
+        "  'mixer for church' -> query: 'mixer' | spec: 'Live-sound audio mixing console for mics " +
+        "and instruments into a PA. NOT a video switcher, NOT a studio recording interface.'\n\n" +
+        "If the first query returns nothing, TRY A BROADER ONE before concluding anything. " +
+        "'alto saxophone reed' -> 'saxophone reed' -> 'reed'. Never give up after one search.",
       parameters: {
         type: "object",
         properties: {
+          query: {
+            type: "string",
+            description:
+              "BROAD. Product noun + instrument only. Words that appear in a TITLE. " +
+              "e.g. 'alto saxophone reed', 'vocal microphone', 'powered PA speaker'. " +
+              "NEVER include strength, size, finish, or color — those are variant options."
+          },
           spec: {
             type: "string",
             description:
-              "REQUIRED. What the customer actually needs, and explicitly what would NOT qualify. " +
-              "Write this BEFORE you look at any products. This is your commitment."
+              "NARROW. What the customer actually needs, and what would NOT qualify. " +
+              "You use this to judge results. It does NOT affect the search."
           },
-          query: {
-            type: "string",
-            description: "Search words likely to appear in a product's title or type."
-          },
-          limit: { type: "integer", description: "Results to return (default 12, max 40)." },
+          limit: { type: "integer", description: "Results (default 12, max 40)." },
           sellable_only: {
             type: "boolean",
-            description: "Default true. False also shows products we can't sell today (drafts)."
+            description: "Default true. False also shows drafts we can't sell today."
           }
         },
-        required: ["spec", "query"]
+        required: ["query", "spec"]
       }
     }
   },
@@ -141,19 +155,29 @@ export async function executeTool(name, args) {
           includeDrafts: !sellableOnly
         }).map(slim);
 
+        const withOptions = results.filter(p => p.hasVariants).length;
+
         return {
           your_spec: args.spec,
-          query: args.query,
+          query_used: args.query,
           found: results.length,
           products: results,
-          REMINDER:
-            "These matched WORDS, not your spec. Read your own spec above and reject anything " +
-            "that doesn't meet it. A product being in this list does NOT mean it's right. " +
-            "If nothing here genuinely meets your spec, recommend NOTHING and hand this role to " +
-            "the Victory team.",
-          note: results.length === 0
-            ? "Nothing found. Call check_live_website before saying we don't have it."
-            : undefined
+          HOW_TO_USE_THIS: [
+            "These matched WORDS in titles/types. They are CANDIDATES, not answers.",
+            "Judge each against YOUR spec above. Reject anything that doesn't fit.",
+            "NEVER offer the wrong instrument. If they asked for ALTO, a BARITONE reed is WRONG — " +
+              "it is not 'suitable', it is a different instrument. Do not substitute.",
+            withOptions > 0
+              ? "IMPORTANT: some of these have `options` and `variants`. Strength, size, finish, " +
+                "and length live THERE, not in the title. If the customer asked for a 'soft' reed " +
+                "or a 'silver' finish, look in the variants — do NOT say we don't carry it."
+              : null,
+            results.length === 0
+              ? "Nothing found. TRY A BROADER QUERY before concluding anything ('alto saxophone " +
+                "reed' -> 'saxophone reed' -> 'reed'). Only after several honest attempts should " +
+                "you call check_live_website."
+              : null
+          ].filter(Boolean)
         };
       }
 
