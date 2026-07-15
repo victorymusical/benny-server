@@ -19,6 +19,7 @@
 // hardcode the WORKFLOW; the model supplies the expertise.
 
 import client from "./openai.js";
+import { MODELS, chatComplete } from "./models.js";
 
 const ASSESS_PROMPT = `
 You are the front-of-house brain for Benny, the product advisor at Victory
@@ -101,8 +102,8 @@ function parseJSON(raw) {
 
 export async function runAssessment(messages) {
   try {
-    const response = await client.chat.completions.create({
-      model: "gpt-4.1-mini",
+    const response = await chatComplete(client, {
+      model: MODELS.assess,
       temperature: 0.2,
       max_tokens: 700,
       messages: [{ role: "system", content: ASSESS_PROMPT }, ...messages],

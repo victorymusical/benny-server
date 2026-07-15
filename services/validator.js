@@ -23,6 +23,7 @@
 // An infrastructure hiccup must never become a false "we don't have it."
 
 import client from "./openai.js";
+import { MODELS, chatComplete } from "./models.js";
 
 const VALIDATOR_PROMPT = `
 You are a fit inspector for a music/pro-audio retailer. You are NOT a
@@ -112,11 +113,6 @@ function forJudgment(p) {
   };
 }
 
-// The validator only runs on consultative turns with a small payload, so a
-// stronger model here is cheap - and fit judgment is exactly where deeper
-// product knowledge pays (knowing an "RC3 wireless head" is a handheld
-// capsule, not a headset). Override with BENNY_VALIDATOR_MODEL if needed.
-const VALIDATOR_MODEL = process.env.BENNY_VALIDATOR_MODEL || "gpt-4.1";
 
 export async function validateFit(assessment, customerText, candidates) {
   if (!candidates || !candidates.length) return { verdicts: new Map(), validated: true };
@@ -131,8 +127,8 @@ export async function validateFit(assessment, customerText, candidates) {
       candidates: candidates.map(forJudgment)
     };
 
-    const response = await client.chat.completions.create({
-      model: VALIDATOR_MODEL,
+    const response = await chatComplete(client, {
+      model: MODELS.validator,
       temperature: 0,
       max_tokens: 900,
       messages: [
