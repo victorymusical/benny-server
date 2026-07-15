@@ -13,6 +13,7 @@ import {
   getAllProducts
 } from "../services/catalog.js";
 import { searchCatalog, findByVendor, slim } from "../services/catalogSearch.js";
+import { MODELS } from "../services/models.js";
 
 const router = express.Router();
 
@@ -21,6 +22,20 @@ function authorized(req) {
   if (!required) return false;
   return req.query.token === required || req.headers["x-admin-token"] === required;
 }
+
+// Which model powers each stage. Set via Railway env vars:
+// BENNY_MAIN_MODEL, BENNY_ASSESS_MODEL, BENNY_VALIDATOR_MODEL,
+// BENNY_FAST_MODEL, BENNY_EMBEDDING_MODEL.
+router.get("/model-config", (req, res) => {
+  if (!authorized(req)) return res.status(401).json({ error: "Unauthorized." });
+  res.json({
+    assessment: MODELS.assess,
+    main_advisor: MODELS.main,
+    validator: MODELS.validator,
+    fast_reserved: MODELS.fast,
+    embeddings_reserved: MODELS.embedding
+  });
+});
 
 router.get("/shopify-auth-status", async (req, res) => {
   if (!authorized(req)) return res.status(401).json({ error: "Unauthorized." });
